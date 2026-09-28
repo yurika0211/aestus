@@ -1,0 +1,24 @@
+# Binaries / local build
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Go
+vendor/
+.gocache/
+.cache/
+
+# Local vaults / runtime
+.aestus/
+*.db
+*.sqlite
+*.sqlite3
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
