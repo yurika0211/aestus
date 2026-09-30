@@ -1,8 +1,10 @@
-package memory
+package shortterm
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/yurika0211/aestus/internal/textutil"
 )
 
 func TestShortTermBufferAdd(t *testing.T) {
@@ -252,13 +254,13 @@ func TestSessionShortTermStoreDoesNotCreateForEmptyID(t *testing.T) {
 
 // --- 辅助函数测试 ---
 
-func TestTruncateField(t *testing.T) {
-	result := truncateField("short", 10)
+func TestTrimToRunes(t *testing.T) {
+	result := textutil.TrimToRunes("short", 10)
 	if result != "short" {
 		t.Errorf("expected 'short', got '%s'", result)
 	}
 
-	result = truncateField("this is a very long string that should be truncated", 10)
+	result = textutil.TrimToRunes("this is a very long string that should be truncated", 10)
 	if result != "this is a" {
 		t.Errorf("expected no-marker truncation, got %q", result)
 	}
@@ -291,7 +293,7 @@ func TestExtractDecisions(t *testing.T) {
 
 func TestDedupSlice(t *testing.T) {
 	input := []string{"a", "b", "a", "c", "b"}
-	result := dedupSlice(input)
+	result := textutil.DedupNonEmptyStrings(input)
 	if len(result) != 3 {
 		t.Errorf("expected 3 unique items, got %d: %v", len(result), result)
 	}

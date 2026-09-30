@@ -77,7 +77,17 @@ The public import path is:
 github.com/yurika0211/aestus/memory
 ```
 
-The package includes durable save/search/recall, graph activation and topology, temporal state routing, hygiene scans and quarantine, note migration/rename helpers, short term buffers, mid term summaries, and the optional tidal reranker/store. `memory.Message` is a small LLM agnostic `{Role, Content}` type returned by short term context helpers; convert it to the message type used by your provider.
+The package includes durable save/search/recall, graph activation and topology, temporal state routing, hygiene scans and quarantine, and note migration/rename helpers.
+
+Short term buffers, mid term summaries, and the optional tidal reranker live in subpackages and are also available through the `memory` names:
+
+```text
+github.com/yurika0211/aestus/memory/shortterm
+github.com/yurika0211/aestus/memory/midterm
+github.com/yurika0211/aestus/memory/tidal
+```
+
+`memory.Message` is a small LLM agnostic `{Role, Content}` type returned by short term context helpers; convert it to the message type used by your provider.
 
 See [`docs/`](docs/) for the memory model, vault format, hygiene guidance, recall patterns, and tidal design notes. A minimal runnable example is in [`examples/basic`](examples/basic).
 

@@ -4,10 +4,23 @@ Aestus is a file first memory system extracted from LuckyAgent. Its durable sour
 
 ## Four layers
 
-1. **Short term** — `memory.ShortTermBuffer` keeps the most recent messages and compresses overflow into a deterministic structured summary. `SessionShortTermStore` keeps buffers isolated by session.
-2. **Mid term** — `memory.MidTermStore` writes `SessionSummary` records under a caller supplied directory, normally `30_Sessions`.
+1. **Short term** — `memory/shortterm` keeps the most recent messages and compresses overflow into a deterministic structured summary. `SessionShortTermStore` keeps buffers isolated by session.
+2. **Mid term** — `memory/midterm` writes `SessionSummary` records under a caller supplied directory, normally `30_Sessions`.
 3. **Durable** — `memory.Store` persists facts, preferences, rules, projects, decisions, and graph concepts as Markdown notes. `Search`, `Activate`, `Route`, and `GraphTopology` operate on this vault.
-4. **Tidal reranking** — `TidalMemoryReranker` can adjust post recall ordering from weak feedback. `TidalStore` keeps its optional SQLite telemetry separate from the Markdown source of truth.
+4. **Tidal reranking** — `memory/tidal` adjusts post recall ordering from weak feedback. `TidalStore` keeps its optional SQLite telemetry separate from the Markdown source of truth.
+
+## Packages
+
+| Import | Owns |
+| --- | --- |
+| `github.com/yurika0211/aestus/memory` | Durable vault: save, search, graph, route, hygiene |
+| `github.com/yurika0211/aestus/memory/shortterm` | In-process conversation buffer |
+| `github.com/yurika0211/aestus/memory/midterm` | Session summary notes |
+| `github.com/yurika0211/aestus/memory/tidal` | Post-recall rerank and SQLite telemetry |
+
+`memory` re-exports the short-term, mid-term, and tidal constructors, so `memory.NewStore`, `memory.NewShortTermBuffer`, `memory.NewMidTermStore`, and `memory.NewTidalMemoryReranker` still work. Import a subpackage directly when a caller only needs that layer. `memory/tidal` does not import `memory`; `memory/tidal_adapter.go` converts durable entries into the tidal note type.
+
+Inside `memory`, files stay split by responsibility: `store.go` loads the vault, `note.go` renders Markdown, `graph.go` rebuilds wikilinks, `concepts.go` holds built-in concept rules, `temporal.go` resolves superseded notes, and `match.go` scores lexical overlap. Shared frontmatter splitting lives in `internal/notemd`.
 
 ## Durable vault
 
