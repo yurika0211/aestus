@@ -3,10 +3,25 @@ package memory
 import (
 	"time"
 
+	"github.com/yurika0211/aestus/memory/maintain"
 	"github.com/yurika0211/aestus/memory/midterm"
 	"github.com/yurika0211/aestus/memory/shortterm"
 	"github.com/yurika0211/aestus/memory/tidal"
 )
+
+type (
+	MaintenanceConfig      = maintain.Config
+	MaintenanceEvent       = maintain.Event
+	MaintenanceCoordinator = maintain.Coordinator
+)
+
+func DefaultMaintenanceConfig() MaintenanceConfig {
+	return maintain.DefaultConfig()
+}
+
+func NewMaintenanceCoordinator(config MaintenanceConfig) *MaintenanceCoordinator {
+	return maintain.NewCoordinator(config)
+}
 
 // Short-term conversation buffers. The implementation lives in package
 // shortterm; these names keep the original memory API.

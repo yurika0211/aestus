@@ -4,6 +4,8 @@ package memory
 import (
 	"strings"
 	"time"
+
+	"github.com/yurika0211/aestus/memory/note"
 )
 
 func entryIsActive(e *Entry, asOf time.Time) bool {
@@ -138,14 +140,7 @@ func refForEntry(e *Entry) string {
 	if e == nil {
 		return ""
 	}
-	ref := e.ID
-	if e.Path != "" {
-		ref = e.Path
-		if e.BlockID != "" {
-			ref += "#" + e.BlockID
-		}
-	}
-	return ref
+	return note.Ref(*e)
 }
 
 func routeEvidenceRefs(entries []Entry, limit int) []string {

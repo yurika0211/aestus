@@ -14,13 +14,18 @@ Aestus is a file first memory system extracted from LuckyAgent. Its durable sour
 | Import | Owns |
 | --- | --- |
 | `github.com/yurika0211/aestus/memory` | Durable vault: save, search, graph, route, hygiene |
+| `github.com/yurika0211/aestus/memory/note` | `Entry`, `Tier`, and the route-policy data stored on a note |
+| `github.com/yurika0211/aestus/memory/policy` | Route-policy normalization and evaluation |
+| `github.com/yurika0211/aestus/memory/maintain` | Turn counters and maintenance cadence |
 | `github.com/yurika0211/aestus/memory/shortterm` | In-process conversation buffer |
 | `github.com/yurika0211/aestus/memory/midterm` | Session summary notes |
 | `github.com/yurika0211/aestus/memory/tidal` | Post-recall rerank and SQLite telemetry |
 
-`memory` re-exports the short-term, mid-term, and tidal constructors, so `memory.NewStore`, `memory.NewShortTermBuffer`, `memory.NewMidTermStore`, and `memory.NewTidalMemoryReranker` still work. Import a subpackage directly when a caller only needs that layer. `memory/tidal` does not import `memory`; `memory/tidal_adapter.go` converts durable entries into the tidal note type.
+`memory` re-exports the note, policy, maintenance, short-term, mid-term, and tidal names, so `memory.Entry`, `memory.NewStore`, `memory.NewShortTermBuffer`, `memory.NewMidTermStore`, and `memory.NewTidalMemoryReranker` still work. Import a subpackage directly when a caller only needs that layer.
 
-Inside `memory`, files stay split by responsibility: `store.go` loads the vault, `note.go` renders Markdown, `graph.go` rebuilds wikilinks, `concepts.go` holds built-in concept rules, `temporal.go` resolves superseded notes, and `match.go` scores lexical overlap. Shared frontmatter splitting lives in `internal/notemd`.
+`note` owns the record and does not import the vault. `policy` evaluates rules against those records. `maintain` only counts turns. `tidal` does not import `memory`; `memory/tidal_adapter.go` converts durable entries into the tidal note type.
+
+Inside `memory`, files stay split by vault responsibility: `store.go` loads the vault, `note.go` renders Markdown, `graph.go` rebuilds wikilinks, `concepts.go` holds built-in concept rules, `temporal.go` resolves superseded notes, and `match.go` scores lexical overlap. Shared frontmatter splitting lives in `internal/notemd`.
 
 ## Durable vault
 

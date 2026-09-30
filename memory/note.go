@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/yurika0211/aestus/internal/notemd"
+	"github.com/yurika0211/aestus/memory/policy"
 )
 
 type memoryNoteFrontmatter struct {
@@ -66,7 +67,7 @@ func normalizeEntryForNote(e *Entry) {
 	e.Tags = dedupSlice(e.Tags)
 	e.Aliases = dedupSlice(e.Aliases)
 	e.Supersedes = dedupSlice(e.Supersedes)
-	if policies, err := normalizeRoutePolicies(e.RoutePolicies); err == nil {
+	if policies, err := policy.Normalize(e.RoutePolicies); err == nil {
 		e.RoutePolicies = policies
 	}
 	e.StateKey = strings.TrimSpace(e.StateKey)
@@ -369,7 +370,7 @@ func parseMemoryNote(path, root string) (*Entry, bool, error) {
 		content = strings.TrimSpace(bodyWithoutTitle(body))
 	}
 	content = strings.TrimSpace(blockIDPattern.ReplaceAllString(content, ""))
-	policies, err := normalizeRoutePolicies(fm.RoutePolicies)
+	policies, err := policy.Normalize(fm.RoutePolicies)
 	if err != nil {
 		return nil, false, fmt.Errorf("invalid route_policies: %w", err)
 	}

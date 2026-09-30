@@ -12,6 +12,9 @@ vendor/
 
 # Local vaults / runtime
 .aestus/
+
+# LongMemEval data is downloaded separately. See eval/data/README.md.
+eval/data/*.json
 *.db
 *.sqlite
 *.sqlite3

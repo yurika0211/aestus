@@ -2,109 +2,41 @@ package memory
 
 import (
 	"fmt"
-	"math"
 	"os"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/yurika0211/aestus/memory/maintain"
+	"github.com/yurika0211/aestus/memory/note"
+	"github.com/yurika0211/aestus/memory/policy"
 )
 
-// Durable vault model and Store API.
+// Durable vault API.
 //
-// Conversation buffers live in package shortterm, session summaries in
-// package midterm, and the optional reranker in package tidal. Tier below is
-// the retention class of one durable note. Note format, graph index, concept
-// rules, and temporal resolution live in note.go, graph.go, concepts.go, and
-// temporal.go.
+// The note record lives in package note, route-policy evaluation in package
+// policy, and turn cadence in package maintain. Conversation buffers, session
+// summaries, and the optional reranker live in shortterm, midterm, and tidal.
 
-// Tier 记忆层级
-type Tier int
+type (
+	Tier                 = note.Tier
+	Entry                = note.Entry
+	RoutePolicy          = note.RoutePolicy
+	RoutePolicyMatch     = note.RoutePolicyMatch
+	RouteTermGroup       = note.RouteTermGroup
+	RouteStateMatch      = note.RouteStateMatch
+	RouteRisk            = note.RouteRisk
+	RouteToolRequirement = note.RouteToolRequirement
+	RouteToolCall        = note.RouteToolCall
+	AppliedRoutePolicy   = note.AppliedRoutePolicy
+)
 
 const (
-	TierShort  Tier = iota // 短期：会话内
-	TierMedium             // 中期：日常
-	TierLong               // 长期：持久
+	TierShort  = note.TierShort
+	TierMedium = note.TierMedium
+	TierLong   = note.TierLong
 )
-
-func (t Tier) String() string {
-	switch t {
-	case TierShort:
-		return "short"
-	case TierMedium:
-		return "medium"
-	case TierLong:
-		return "long"
-	default:
-		return "unknown"
-	}
-}
-
-// Entry 代表一条记忆
-type Entry struct {
-	ID            string        `json:"id"`
-	Content       string        `json:"content"`
-	Category      string        `json:"category"`
-	Tier          Tier          `json:"tier"`
-	Importance    float64       `json:"importance"`   // 0.0 ~ 1.0，越高越重要
-	AccessCount   int           `json:"access_count"` // 被检索次数
-	CreatedAt     time.Time     `json:"created_at"`
-	AccessedAt    time.Time     `json:"accessed_at"` // 最后被检索时间
-	Tags          []string      `json:"tags,omitempty"`
-	SummaryOf     []string      `json:"summary_of,omitempty"` // 如果是摘要，记录原始条目 ID
-	ExpiresAt     *time.Time    `json:"expires_at,omitempty"` // 过期时间，nil 表示永不过期
-	Status        string        `json:"status,omitempty"`     // active/superseded/archived/conflict
-	ValidFrom     time.Time     `json:"valid_from,omitempty"`
-	ValidUntil    *time.Time    `json:"valid_until,omitempty"`
-	Links         []string      `json:"links,omitempty"`     // Obsidian wikilinks referenced by this note
-	Aliases       []string      `json:"aliases,omitempty"`   // Obsidian note aliases / concept aliases
-	StateKey      string        `json:"state_key,omitempty"` // Stable key for temporal state resolution
-	StateValue    string        `json:"state_value,omitempty"`
-	Confidence    float64       `json:"confidence,omitempty"`
-	Supersedes    []string      `json:"supersedes,omitempty"`
-	RoutePolicies []RoutePolicy `json:"route_policies,omitempty"`
-	BlockID       string        `json:"block_id,omitempty"` // Stable Obsidian block id for exact references
-	Path          string        `json:"path,omitempty"`     // Path relative to the memory vault
-}
-
-// Weight 计算记忆权重（用于排序和衰减）
-// 考虑：重要性 × 时间衰减 × 访问频率加成
-func (e *Entry) Weight(now time.Time) float64 {
-	return e.Importance * e.recencyFactor(now) * e.accessBoost()
-}
-
-func (e *Entry) recencyFactor(now time.Time) float64 {
-	halflife := e.halflife()
-	if halflife <= 0 {
-		return 1
-	}
-	age := now.Sub(e.CreatedAt).Hours()
-	if age <= 0 {
-		return 1
-	}
-	return math.Pow(0.5, age/halflife)
-}
-
-func (e *Entry) accessBoost() float64 {
-	if e.AccessCount <= 0 {
-		return 1
-	}
-	return 1 + min(math.Log1p(float64(e.AccessCount))*0.12, 0.75)
-}
-
-// halflife 返回该层级记忆的半衰期（小时）
-func (e *Entry) halflife() float64 {
-	switch e.Tier {
-	case TierShort:
-		return 1.0 // 1 小时
-	case TierMedium:
-		return 24.0 * 7 // 1 周
-	case TierLong:
-		return 24.0 * 365 // 1 年
-	default:
-		return 24.0
-	}
-}
 
 // Store 管理三层持久记忆
 type Store struct {
@@ -118,7 +50,7 @@ type Store struct {
 	// maintenance owns turn cadence for this process-wide memory store. It is
 	// initialized lazily so the Store zero value remains useful in tests.
 	maintenanceOnce sync.Once
-	maintenance     *MaintenanceCoordinator
+	maintenance     *maintain.Coordinator
 }
 
 type closeableActivationReranker interface {
@@ -135,26 +67,10 @@ type GraphIndex struct {
 }
 
 // RouteAnalysis turns retrieved memories into action-facing routing signals.
-// The Markdown notes remain the source of truth; this is a deterministic layer
-// that helps the agent convert graph recall into tool and answer constraints.
-type RouteAnalysis struct {
-	Query             string                 `json:"query"`
-	Entries           []Entry                `json:"entries"`
-	ToolRequirements  []RouteToolRequirement `json:"tool_requirements,omitempty"`
-	Risks             []RouteRisk            `json:"risks,omitempty"`
-	AppliedPolicies   []AppliedRoutePolicy   `json:"applied_policies,omitempty"`
-	RequiredTools     []string               `json:"required_tools,omitempty"`
-	SuggestedSearches []string               `json:"suggested_searches,omitempty"`
-	RiskFlags         []string               `json:"risk_flags,omitempty"`
-	Constraints       []string               `json:"constraints,omitempty"`
-	Clarifications    []string               `json:"clarifications,omitempty"`
-	TemporalNotes     []string               `json:"temporal_notes,omitempty"`
-	EvidenceRefs      []string               `json:"evidence_refs,omitempty"`
-	SupersededRefs    []string               `json:"superseded_refs,omitempty"`
-	ConflictRefs      []string               `json:"conflict_refs,omitempty"`
-	ExpiredRefs       []string               `json:"expired_refs,omitempty"`
-	FutureRefs        []string               `json:"future_refs,omitempty"`
-}
+type RouteAnalysis = policy.Analysis
+
+// RouteOptions controls which recalled entries can affect routing.
+type RouteOptions = policy.RouteOptions
 
 // SaveOptions carries optional Obsidian and temporal-state metadata.
 type SaveOptions struct {
@@ -236,7 +152,7 @@ func (s *Store) SaveWithOptionsResult(content, category string, tier Tier, impor
 	if content == "" {
 		return SaveResult{}, nil
 	}
-	policies, err := normalizeRoutePolicies(opts.RoutePolicies)
+	policies, err := policy.Normalize(opts.RoutePolicies)
 	if err != nil {
 		return SaveResult{}, err
 	}
@@ -300,7 +216,7 @@ func (s *Store) SaveWithOptionsResult(content, category string, tier Tier, impor
 				e.Supersedes = dedupSlice(append(e.Supersedes, opts.Supersedes...))
 			}
 			if len(opts.RoutePolicies) > 0 {
-				e.RoutePolicies = mergeRoutePolicies(e.RoutePolicies, opts.RoutePolicies)
+				e.RoutePolicies = policy.Merge(e.RoutePolicies, opts.RoutePolicies)
 			}
 			e.Links = normalizeMemoryLinks(append(e.Links, extractWikiLinks(e.Content)...))
 			e.Aliases = dedupSlice(e.Aliases)
@@ -787,7 +703,7 @@ func (s *Store) RouteWithOptions(query string, opts RouteOptions) RouteAnalysis 
 	route.ConflictRefs = resolution.ConflictRefs
 	route.ExpiredRefs = resolution.ExpiredRefs
 	route.FutureRefs = resolution.FutureRefs
-	applyRoutePolicies(&route, query, entries)
+	policy.Apply(&route, query, entries)
 	route.EvidenceRefs = routeEvidenceRefs(entries, 6)
 	return route
 }
@@ -1148,6 +1064,37 @@ func (s *Store) Count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.entries)
+}
+
+// RecordTurn records a completed turn against the store's memory runtime.
+func (s *Store) RecordTurn(sessionID string) MaintenanceEvent {
+	if s == nil {
+		return MaintenanceEvent{}
+	}
+	s.maintenanceOnce.Do(func() {
+		s.maintenance = NewMaintenanceCoordinator(DefaultMaintenanceConfig())
+	})
+	return s.maintenance.RecordTurn(sessionID)
+}
+
+// MaintenanceCoordinator returns the store-owned coordinator.
+func (s *Store) MaintenanceCoordinator() *MaintenanceCoordinator {
+	if s == nil {
+		return nil
+	}
+	s.maintenanceOnce.Do(func() {
+		s.maintenance = NewMaintenanceCoordinator(DefaultMaintenanceConfig())
+	})
+	return s.maintenance
+}
+
+// ForgetSession releases the coordinator's per-session attribution after a
+// session is deleted. The process-wide cadence is intentionally preserved.
+func (s *Store) ForgetSession(sessionID string) {
+	if s == nil {
+		return
+	}
+	s.MaintenanceCoordinator().ForgetSession(sessionID)
 }
 
 // Dir returns the root directory of the Aestus memory vault.

@@ -239,8 +239,8 @@ func (s *Store) activateLocked(queryLower string, queryTerms []string, now time.
 		}
 		components.Importance = e.Importance
 		components.Tier = tierActivationMultiplier(e.Tier)
-		components.Recency = e.recencyFactor(now)
-		components.Access = e.accessBoost()
+		components.Recency = e.RecencyFactor(now)
+		components.Access = e.AccessBoost()
 		total := matchScore * e.Weight(now) * components.Tier
 		scores[id] = &ActivationScore{
 			EntryID:     id,
@@ -566,8 +566,8 @@ func (s *Store) addActivationBoostLocked(scores map[string]*ActivationScore, sou
 			Components: ActivationComponents{
 				Importance: target.Importance,
 				Tier:       tierActivationMultiplier(target.Tier),
-				Recency:    target.recencyFactor(now),
-				Access:     target.accessBoost(),
+				Recency:    target.RecencyFactor(now),
+				Access:     target.AccessBoost(),
 			},
 		}
 		scores[targetID] = score

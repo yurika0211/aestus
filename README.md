@@ -82,6 +82,9 @@ The package includes durable save/search/recall, graph activation and topology, 
 Short term buffers, mid term summaries, and the optional tidal reranker live in subpackages and are also available through the `memory` names:
 
 ```text
+github.com/yurika0211/aestus/memory/note
+github.com/yurika0211/aestus/memory/policy
+github.com/yurika0211/aestus/memory/maintain
 github.com/yurika0211/aestus/memory/shortterm
 github.com/yurika0211/aestus/memory/midterm
 github.com/yurika0211/aestus/memory/tidal
@@ -89,7 +92,11 @@ github.com/yurika0211/aestus/memory/tidal
 
 `memory.Message` is a small LLM agnostic `{Role, Content}` type returned by short term context helpers; convert it to the message type used by your provider.
 
-See [`docs/`](docs/) for the memory model, vault format, hygiene guidance, recall patterns, and tidal design notes. A minimal runnable example is in [`examples/basic`](examples/basic).
+See [`docs/`](docs/) for the memory model, vault format, hygiene guidance, recall patterns, and tidal design notes. A minimal runnable example is in [`examples/basic`](examples/basic). [`examples/demo`](examples/demo) serves the graph and recall surface:
+
+```bash
+go run ./examples/demo
+```
 
 ## License
 
