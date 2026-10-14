@@ -149,6 +149,9 @@ func (s *Store) RenameNotes(opts NoteRenameOptions) (NoteRenameReport, error) {
 		}
 		report.Renamed++
 	}
+	if err := s.rewriteIncomingLinksLocked(plans); err != nil {
+		return report, err
+	}
 	if err := s.persist(); err != nil {
 		return report, err
 	}
@@ -345,6 +348,87 @@ func (s *Store) pruneDuplicateNotesAfterPersistLocked(report *NoteRenameReport) 
 		return err
 	}
 	return s.persist()
+}
+
+// rewriteIncomingLinksLocked updates wikilinks that name a note by its old
+// filename. Heading, block, and display text stay. A mention that is not a
+// wikilink is left alone. The caller persists after the path rename.
+func (s *Store) rewriteIncomingLinksLocked(plans []NoteRenamePlan) error {
+	renames := make(map[string]string)
+	for _, plan := range plans {
+		oldName := strings.TrimSuffix(filepath.Base(filepath.FromSlash(plan.From)), ".md")
+		newName := strings.TrimSuffix(filepath.Base(filepath.FromSlash(plan.To)), ".md")
+		if oldName == "" || newName == "" || oldName == newName {
+			continue
+		}
+		key := graphKey(oldName)
+		if key == "" {
+			continue
+		}
+		if previous, exists := renames[key]; exists && previous != newName {
+			return fmt.Errorf("rename %q and another note to different names from %q", newName, oldName)
+		}
+		renames[key] = newName
+	}
+	if len(renames) == 0 {
+		return nil
+	}
+	for _, entry := range s.entries {
+		if entry == nil || !incomingLinksNeedRename(entry.Content, renames) {
+			continue
+		}
+		updated := renameWikiLinkTargets(entry.Content, renames)
+		if updated == entry.Content {
+			continue
+		}
+		entry.Content = updated
+		entry.Links = normalizeMemoryLinks(extractWikiLinks(updated))
+	}
+	return nil
+}
+
+func incomingLinksNeedRename(content string, renames map[string]string) bool {
+	for _, link := range parseWikiLinks(content) {
+		if _, ok := renames[graphKey(link.Target)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func renameWikiLinkTargets(content string, renames map[string]string) string {
+	return wikiLinkSpan.ReplaceAllStringFunc(content, func(match string) string {
+		span := wikiLinkSpan.FindStringSubmatchIndex(match)
+		if span == nil {
+			return match
+		}
+		inner := match[span[2]:span[3]]
+		link, ok := parseWikiLink(match, inner)
+		if !ok {
+			return match
+		}
+		newName, ok := renames[graphKey(link.Target)]
+		if !ok {
+			return match
+		}
+		body := newName
+		if link.Heading != "" && link.Block != "" {
+			body += "#" + link.Heading + "#^" + link.Block
+		} else if link.Block != "" {
+			body += "#^" + link.Block
+		} else if link.Heading != "" {
+			body += "#" + link.Heading
+		}
+		rewritten := "[[" + body
+		if link.Display != "" {
+			rewritten += "|" + link.Display
+		}
+		rewritten += "]]"
+		if link.Embed {
+			rewritten = "!" + rewritten
+		}
+		return rewritten
+	})
 }
 
 func renameNotesSkipEntry(entry *Entry) bool {

@@ -2,10 +2,20 @@ package policy
 
 import "github.com/yurika0211/aestus/memory/note"
 
+// Excerpt names the heading or block a wikilink pointed at. The stored note
+// stays whole; Context is the section a caller injects instead.
+type Excerpt struct {
+	Heading string `json:"heading,omitempty"`
+	Block   string `json:"block,omitempty"`
+	Context string `json:"context,omitempty"`
+	Missing bool   `json:"missing,omitempty"`
+}
+
 // Analysis turns retrieved memories into action-facing routing signals.
 type Analysis struct {
 	Query             string                      `json:"query"`
 	Entries           []note.Entry                `json:"entries"`
+	Excerpts          map[string][]Excerpt        `json:"excerpts,omitempty"`
 	ToolRequirements  []note.RouteToolRequirement `json:"tool_requirements,omitempty"`
 	Risks             []note.RouteRisk            `json:"risks,omitempty"`
 	AppliedPolicies   []note.AppliedRoutePolicy   `json:"applied_policies,omitempty"`

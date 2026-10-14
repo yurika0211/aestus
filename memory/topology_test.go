@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -175,4 +176,144 @@ func TestGraphTopologyIgnoresSelfLinks(t *testing.T) {
 			t.Fatalf("self-loop survived: %+v", edge)
 		}
 	}
+}
+
+func TestGraphTopologyKeepsHeadingBlockDisplayAndEmbedOnOneEdge(t *testing.T) {
+	store := seedVault(t)
+	if err := store.SaveWithMetadata("登录笔记", "concept", TierLong, 0.5, nil, nil, []string{"登录"}); err != nil {
+		t.Fatalf("save login: %v", err)
+	}
+	body := "见 [[mem_9999999999]]、[[登录#失败原因]]、[[登录#^block-9]]、[[登录|登录流程]]。\n嵌入 ![[登录]]。"
+	if err := store.SaveWithMetadata(body, "fact", TierLong, 0.7, nil, nil, nil); err != nil {
+		t.Fatalf("save source: %v", err)
+	}
+
+	topology := store.GraphTopology(GraphTopologyOptions{IncludeIsolated: true})
+	loginEdges := edgesToTitle(t, topology, "登录笔记")
+	if len(loginEdges) != 1 {
+		t.Fatalf("edges to 登录 = %d, want one note edge: %+v", len(loginEdges), loginEdges)
+	}
+	edge := loginEdges[0]
+	if len(edge.Refs) != 4 {
+		t.Fatalf("refs = %d, want heading, block, display, embed: %+v", len(edge.Refs), edge.Refs)
+	}
+	seen := map[string]bool{}
+	for _, ref := range edge.Refs {
+		switch {
+		case ref.Heading == "失败原因" && ref.Block == "" && ref.Display == "" && !ref.Embed:
+			seen["heading"] = true
+		case ref.Block == "block-9" && ref.Heading == "" && !ref.Embed:
+			seen["block"] = true
+		case ref.Display == "登录流程" && !ref.Embed:
+			seen["display"] = true
+		case ref.Embed && ref.Heading == "" && ref.Block == "" && ref.Display == "":
+			seen["embed"] = true
+		}
+	}
+	for _, kind := range []string{"heading", "block", "display", "embed"} {
+		if !seen[kind] {
+			t.Fatalf("missing %s ref: %+v", kind, edge.Refs)
+		}
+	}
+
+	byTitle := topologyByTitle(topology)
+	missing, ok := byTitle["mem_9999999999"]
+	if !ok || missing.Resolved {
+		t.Fatalf("missing memory link = %+v, present %v", missing, ok)
+	}
+	if topology.Unresolved != 1 {
+		t.Fatalf("unresolved = %d, want the missing memory id only", topology.Unresolved)
+	}
+}
+
+func TestGraphTopologyAmbiguousAliasDoesNotPickTheFirstNote(t *testing.T) {
+	store := seedVault(t)
+	if err := store.SaveWithMetadata("first login note", "concept", TierLong, 0.9, nil, nil, []string{"SharedName"}); err != nil {
+		t.Fatalf("save first: %v", err)
+	}
+	if err := store.SaveWithMetadata("second login note", "concept", TierLong, 0.4, nil, nil, []string{"SharedName"}); err != nil {
+		t.Fatalf("save second: %v", err)
+	}
+	if err := store.SaveWithMetadata("see [[SharedName]]", "fact", TierLong, 0.6, nil, nil, nil); err != nil {
+		t.Fatalf("save source: %v", err)
+	}
+
+	topology := store.GraphTopology(GraphTopologyOptions{IncludeIsolated: true})
+	var ambiguous *GraphTopologyNode
+	for i := range topology.Nodes {
+		if topology.Nodes[i].Ambiguous {
+			ambiguous = &topology.Nodes[i]
+			break
+		}
+	}
+	if ambiguous == nil {
+		t.Fatalf("ambiguous name was resolved to one note: %+v", topology.Nodes)
+	}
+	if ambiguous.Resolved || len(ambiguous.Candidates) != 2 {
+		t.Fatalf("ambiguous node = %+v, want two unresolved candidates", *ambiguous)
+	}
+	for _, node := range topology.Nodes {
+		if node.Title == "first login note" || node.Title == "second login note" {
+			if node.Degree != 0 {
+				t.Fatalf("%q degree = %d, ambiguous link must not add degree", node.Title, node.Degree)
+			}
+		}
+	}
+
+	scores := store.Activate("see", ActivationOptions{IncludeGraph: true, UpdateAccessStats: false, Explain: true})
+	for _, score := range scores {
+		if strings.Contains(score.Entry.Content, "login note") && score.Components.GraphBoost > 0 {
+			t.Fatalf("ambiguous alias boosted %q by %f", score.Entry.Content, score.Components.GraphBoost)
+		}
+	}
+}
+
+func TestGraphTopologyUniqueAliasStillResolves(t *testing.T) {
+	store := seedVault(t)
+	if err := store.SaveWithMetadata("see [[UniqueName]]", "fact", TierLong, 0.6, nil, nil, nil); err != nil {
+		t.Fatalf("save source: %v", err)
+	}
+	topology := store.GraphTopology(GraphTopologyOptions{})
+	if len(edgesToTitle(t, topology, "UniqueName")) != 1 {
+		t.Fatal("unique alias did not resolve to its note")
+	}
+	for _, node := range topology.Nodes {
+		if node.Ambiguous {
+			t.Fatalf("unique alias marked ambiguous: %+v", node)
+		}
+	}
+}
+
+func TestGraphTopologyHeadingOnSelfLinkDoesNotMakeAnEdge(t *testing.T) {
+	store := seedVault(t)
+	if err := store.SaveWithMetadata("自己 [[Selfie#标题]]", "concept", TierLong, 0.5, nil, nil, []string{"Selfie"}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	topology := store.GraphTopology(GraphTopologyOptions{IncludeIsolated: true})
+	for _, edge := range topology.Edges {
+		if edge.Source == edge.Target {
+			t.Fatalf("self-link with a heading became an edge: %+v", edge)
+		}
+	}
+}
+
+func edgesToTitle(t *testing.T, topology GraphTopology, title string) []GraphTopologyEdge {
+	t.Helper()
+	var targetID string
+	for _, node := range topology.Nodes {
+		if node.Title == title {
+			targetID = node.ID
+			break
+		}
+	}
+	if targetID == "" {
+		t.Fatalf("no node titled %q: %+v", title, topology.Nodes)
+	}
+	var edges []GraphTopologyEdge
+	for _, edge := range topology.Edges {
+		if edge.Target == targetID {
+			edges = append(edges, edge)
+		}
+	}
+	return edges
 }

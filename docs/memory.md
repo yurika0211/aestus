@@ -39,6 +39,8 @@ The first open creates `00_Index`, `10_Profile`, `20_Projects`, `30_Sessions`, `
 
 An entry records its tier, importance, access timestamps, tags, wikilinks, aliases, temporal state, route policies, and stable block ID. Search combines lexical matching with importance, recency, access, and optional one or more graph hops.
 
+A wikilink is one note-to-note edge. `[[note#heading#^block|text]]` and an embed keep the heading, block, display text, and embed on that edge; they do not create extra nodes. A name that matches more than one note stays unresolved and lists the candidates instead of picking the first registered note. `Activate` and `Route` keep the stored note whole and attach the named heading or block as an excerpt, so a caller can inject that section with `SelectContextText`. `BacklinksFor` returns each written mention with the sentence around it. `UnlinkedMentions` lists a plain-text title or alias without creating an edge. `RenameNotes` rewrites incoming wikilinks that used the old filename and leaves the heading, block, and display text in place.
+
 ## Lifecycle operations
 
 - `Save`, `SaveWithTier`, and `SaveWithOptions` write notes and merge duplicates.

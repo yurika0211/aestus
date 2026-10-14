@@ -485,12 +485,15 @@ type SearchOptions struct {
 }
 
 // SearchResult contains a memory entry plus ranking/explanation signals.
+// Excerpts are injection locators, not stored notes: a heading or block link
+// still selects the whole Entry, and Context is the section to show instead.
 type SearchResult struct {
-	Entry       Entry            `json:"entry"`
-	Score       float64          `json:"score"`
-	DirectScore float64          `json:"direct_score,omitempty"`
-	GraphScore  float64          `json:"graph_score,omitempty"`
-	Paths       []ActivationPath `json:"paths,omitempty"`
+	Entry       Entry               `json:"entry"`
+	Score       float64             `json:"score"`
+	DirectScore float64             `json:"direct_score,omitempty"`
+	GraphScore  float64             `json:"graph_score,omitempty"`
+	Paths       []ActivationPath    `json:"paths,omitempty"`
+	Excerpts    []ActivationExcerpt `json:"excerpts,omitempty"`
 }
 
 // SearchWithOptions searches memory with bounded filters and structured scores.
@@ -541,6 +544,7 @@ func (s *Store) SearchWithOptions(query string, opts SearchOptions) []SearchResu
 			Score:       score.Score,
 			DirectScore: score.DirectScore,
 			GraphScore:  score.Components.GraphBoost,
+			Excerpts:    score.Excerpts,
 		}
 		if opts.Explain {
 			result.Paths = score.Paths
@@ -671,6 +675,43 @@ func (s *Store) RecordActivationFeedback(query string, entries []Entry, signal s
 	}
 }
 
+func routeExcerpts(excerpts map[string][]ActivationExcerpt) map[string][]policy.Excerpt {
+	if len(excerpts) == 0 {
+		return nil
+	}
+	out := make(map[string][]policy.Excerpt, len(excerpts))
+	for id, items := range excerpts {
+		copied := make([]policy.Excerpt, len(items))
+		for i, item := range items {
+			copied[i] = policy.Excerpt{
+				Heading: item.Heading,
+				Block:   item.Block,
+				Context: item.Context,
+				Missing: item.Missing,
+			}
+		}
+		out[id] = copied
+	}
+	return out
+}
+
+func filterRouteExcerpts(excerpts map[string][]policy.Excerpt, entries []Entry) map[string][]policy.Excerpt {
+	if len(excerpts) == 0 || len(entries) == 0 {
+		return nil
+	}
+	kept := make(map[string][]policy.Excerpt, len(entries))
+	for _, entry := range entries {
+		if len(excerpts[entry.ID]) == 0 {
+			continue
+		}
+		kept[entry.ID] = excerpts[entry.ID]
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
+}
+
 // Route searches memory and derives deterministic tool/answer constraints.
 func (s *Store) Route(query string) RouteAnalysis {
 	return s.RouteWithOptions(query, RouteOptions{})
@@ -678,19 +719,24 @@ func (s *Store) Route(query string) RouteAnalysis {
 
 // RouteWithOptions evaluates typed policies on recalled memories visible to the caller.
 func (s *Store) RouteWithOptions(query string, opts RouteOptions) RouteAnalysis {
-	entries := activationScoresToEntries(s.Activate(query, RouteActivationOptions()))
+	scores := s.Activate(query, RouteActivationOptions())
+	entries := activationScoresToEntries(scores)
+	excerpts := routeExcerpts(activationExcerptsByID(scores))
 	if opts.EntryFilter != nil {
 		filtered := make([]Entry, 0, len(entries))
 		for _, entry := range entries {
 			if opts.EntryFilter(entry) {
 				filtered = append(filtered, entry)
+			} else {
+				delete(excerpts, entry.ID)
 			}
 		}
 		entries = filtered
 	}
 	route := RouteAnalysis{
-		Query:   strings.TrimSpace(query),
-		Entries: entries,
+		Query:    strings.TrimSpace(query),
+		Entries:  entries,
+		Excerpts: excerpts,
 	}
 	if len(entries) == 0 {
 		return route
@@ -698,6 +744,7 @@ func (s *Store) RouteWithOptions(query string, opts RouteOptions) RouteAnalysis 
 	resolution := s.resolveTemporal(query, entries, opts.EntryFilter)
 	entries = resolution.Entries
 	route.Entries = entries
+	route.Excerpts = filterRouteExcerpts(excerpts, entries)
 	route.TemporalNotes = resolution.Notes
 	route.SupersededRefs = resolution.SupersededRefs
 	route.ConflictRefs = resolution.ConflictRefs

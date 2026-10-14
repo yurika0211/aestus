@@ -3,6 +3,7 @@ package memory
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -273,5 +274,73 @@ func TestRenameNotesPrunesDuplicateConceptUsingStorePath(t *testing.T) {
 	}
 	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
 		t.Fatalf("expected old concept duplicate moved, stat err=%v", err)
+	}
+}
+
+func TestRenameNotesRewritesIncomingWikilinks(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := store.SaveWithOptions("旧名是这篇笔记", "fact", TierLong, 0.8, SaveOptions{}); err != nil {
+		t.Fatalf("save renamed note: %v", err)
+	}
+	var renamed *Entry
+	for _, candidate := range store.entries {
+		rename := candidate
+		if strings.Contains(rename.Content, "旧名是这篇笔记") {
+			renamed = rename
+			break
+		}
+	}
+	if renamed == nil {
+		t.Fatal("renamed note missing")
+	}
+	oldRel := filepath.ToSlash(filepath.Join("50_Facts", "旧名.md"))
+	oldPath := filepath.Join(dir, filepath.FromSlash(oldRel))
+	if err := os.MkdirAll(filepath.Dir(oldPath), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Rename(filepath.Join(dir, filepath.FromSlash(renamed.Path)), oldPath); err != nil {
+		t.Fatalf("move renamed note: %v", err)
+	}
+	renamed.Path = oldRel
+	store.paths[renamed.ID] = oldRel
+
+	if err := store.SaveWithOptions("见 [[旧名]] 和 [[旧名#标题#^block-9|显示]]。正文里的旧名不改。", "fact", TierLong, 0.6, SaveOptions{}); err != nil {
+		t.Fatalf("save incoming: %v", err)
+	}
+
+	dryRun, err := store.RenameNotes(NoteRenameOptions{})
+	if err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+	if dryRun.WouldRename == 0 {
+		t.Fatalf("dry-run did not plan a rename: %#v", dryRun)
+	}
+	for _, entry := range store.entries {
+		if strings.Contains(entry.Content, "[[旧名是这篇笔记") {
+			t.Fatalf("dry-run wrote a link: %q", entry.Content)
+		}
+	}
+
+	if _, err := store.RenameNotes(NoteRenameOptions{Apply: true}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var incoming string
+	for _, entry := range store.entries {
+		if strings.Contains(entry.Content, "正文里的旧名不改") {
+			incoming = entry.Content
+		}
+	}
+	if !strings.Contains(incoming, "[[旧名是这篇笔记]]") || !strings.Contains(incoming, "[[旧名是这篇笔记#标题#^block-9|显示]]") {
+		t.Fatalf("incoming links were not rewritten: %q", incoming)
+	}
+	if strings.Contains(incoming, "[[旧名]]") || strings.Contains(incoming, "[[旧名#") {
+		t.Fatalf("old wikilink survived: %q", incoming)
+	}
+	if !strings.Contains(incoming, "正文里的旧名不改") {
+		t.Fatalf("plain mention was rewritten: %q", incoming)
 	}
 }

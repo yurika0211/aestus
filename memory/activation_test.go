@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yurika0211/aestus/memory/policy"
 )
 
 func TestActivateReturnsExplainableComponents(t *testing.T) {
@@ -327,4 +329,112 @@ func TestActivateLimitsGraphSeedsToStrongestDirectMatches(t *testing.T) {
 		}
 	}
 	t.Fatalf("expected strongest seed to propagate critical evidence, got %#v", scores)
+}
+
+func TestActivateExcerptFollowsBlockLink(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	target := "## 失败原因\n凭据过期\n^block-9\n\n## 无关配置\n不要把这一节注入"
+	if err := store.SaveWithOptions(target, "fact", TierLong, 0.9, SaveOptions{}); err != nil {
+		t.Fatalf("save target: %v", err)
+	}
+	var targetID string
+	for _, entry := range store.entries {
+		if strings.Contains(entry.Content, "凭据过期") {
+			targetID = entry.ID
+		}
+	}
+	if targetID == "" {
+		t.Fatal("target id missing")
+	}
+	if err := store.SaveWithOptions("排障指向 [["+targetID+"#^block-9]]", "fact", TierLong, 0.8, SaveOptions{}); err != nil {
+		t.Fatalf("save source: %v", err)
+	}
+
+	scores := store.Activate("排障指向", ActivationOptions{IncludeGraph: true, UpdateAccessStats: false, Explain: true})
+	var found bool
+	for _, score := range scores {
+		if !strings.Contains(score.Entry.Content, "凭据过期") {
+			continue
+		}
+		found = true
+		if len(score.Excerpts) != 1 {
+			t.Fatalf("excerpts = %+v, want the linked block", score.Excerpts)
+		}
+		excerpt := score.Excerpts[0]
+		if excerpt.Block != "block-9" || excerpt.Missing || !strings.Contains(excerpt.Context, "凭据过期") || strings.Contains(excerpt.Context, "无关配置") {
+			t.Fatalf("excerpt = %+v, want only the block", excerpt)
+		}
+	}
+	if !found {
+		t.Fatalf("block target was not activated: %+v", scores)
+	}
+
+	route := store.Route("排障指向")
+	var routed bool
+	for _, entry := range route.Entries {
+		if !strings.Contains(entry.Content, "凭据过期") {
+			continue
+		}
+		routed = true
+		if !strings.Contains(entry.Content, "无关配置") {
+			t.Fatalf("stored note should keep the whole body, got %q", entry.Content)
+		}
+		selected := SelectContextText(entry.Content, activationExcerptsFromRoute(route.Excerpts[entry.ID]))
+		if !strings.Contains(selected, "凭据过期") || strings.Contains(selected, "无关配置") {
+			t.Fatalf("selected context = %q, want only the linked block", selected)
+		}
+	}
+	if !routed {
+		t.Fatalf("route dropped the linked note: %+v", route.Entries)
+	}
+}
+
+func TestActivateMissingBlockFallsBackToWholeNote(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := store.SaveWithOptions("整篇登录笔记", "fact", TierLong, 0.9, SaveOptions{}); err != nil {
+		t.Fatalf("save target: %v", err)
+	}
+	var targetID string
+	for _, entry := range store.entries {
+		if strings.Contains(entry.Content, "整篇登录笔记") {
+			targetID = entry.ID
+		}
+	}
+	if err := store.SaveWithOptions("排障指向 [["+targetID+"#^missing]]", "fact", TierLong, 0.8, SaveOptions{}); err != nil {
+		t.Fatalf("save source: %v", err)
+	}
+	scores := store.Activate("排障指向", ActivationOptions{IncludeGraph: true, UpdateAccessStats: false})
+	for _, score := range scores {
+		if !strings.Contains(score.Entry.Content, "整篇登录笔记") {
+			continue
+		}
+		if len(score.Excerpts) != 1 || !score.Excerpts[0].Missing || score.Excerpts[0].Context != "整篇登录笔记" {
+			t.Fatalf("missing block excerpt = %+v", score.Excerpts)
+		}
+		selected := score.Excerpts[0].ContextText()
+		if !strings.Contains(selected, "整篇登录笔记") || !strings.Contains(selected, "section not found: ^missing") {
+			t.Fatalf("missing locator should keep the note and say so, got %q", selected)
+		}
+		return
+	}
+	t.Fatal("target note was not activated")
+}
+
+func activationExcerptsFromRoute(excerpts []policy.Excerpt) []ActivationExcerpt {
+	out := make([]ActivationExcerpt, len(excerpts))
+	for i, excerpt := range excerpts {
+		out[i] = ActivationExcerpt{
+			Heading: excerpt.Heading,
+			Block:   excerpt.Block,
+			Context: excerpt.Context,
+			Missing: excerpt.Missing,
+		}
+	}
+	return out
 }
