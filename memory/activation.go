@@ -524,12 +524,15 @@ func (s *Store) spreadActivationFromLocked(scores map[string]*ActivationScore, s
 				continue
 			}
 			for _, targetID := range s.graph.Names[key] {
-				s.addActivationBoostLocked(scores, source, targetID, id, "wikilink_target", link, 0.55, depth, now, opts)
+				// A heading or block names a section. That section is recalled even
+				// when the note is a concept placeholder. A bare concept link is not.
+				located := written.Heading != "" || written.Block != ""
+				s.addActivationBoostLocked(scores, source, targetID, id, "wikilink_target", link, 0.55, depth, now, opts, located)
 				s.attachActivationExcerptLocked(scores[targetID], written)
 				visit(targetID)
 			}
 			for _, targetID := range s.graph.Backlinks[key] {
-				s.addActivationBoostLocked(scores, source, targetID, id, "backlink", link, 0.35, depth, now, opts)
+				s.addActivationBoostLocked(scores, source, targetID, id, "backlink", link, 0.35, depth, now, opts, false)
 				visit(targetID)
 			}
 		}
@@ -538,7 +541,7 @@ func (s *Store) spreadActivationFromLocked(scores map[string]*ActivationScore, s
 	for _, alias := range graphAliasesForEntry(entry) {
 		key := graphKey(alias)
 		for _, targetID := range s.graph.Backlinks[key] {
-			s.addActivationBoostLocked(scores, source, targetID, id, "alias_backlink", alias, 0.45, depth, now, opts)
+			s.addActivationBoostLocked(scores, source, targetID, id, "alias_backlink", alias, 0.45, depth, now, opts, false)
 			visit(targetID)
 		}
 	}
@@ -546,7 +549,7 @@ func (s *Store) spreadActivationFromLocked(scores map[string]*ActivationScore, s
 	for _, tag := range entry.Tags {
 		key := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(tag)), "#")
 		for _, targetID := range s.graph.Tags[key] {
-			s.addActivationBoostLocked(scores, source, targetID, id, "shared_tag", tag, 0.18, depth, now, opts)
+			s.addActivationBoostLocked(scores, source, targetID, id, "shared_tag", tag, 0.18, depth, now, opts, false)
 			visit(targetID)
 		}
 	}
@@ -563,8 +566,11 @@ func activationWikiLinks(entry *Entry) []WikiLink {
 	for _, link := range links {
 		seen[activationLinkKey(link)] = true
 	}
-	for _, name := range entry.Links {
-		link := WikiLink{Target: strings.TrimSpace(name)}
+	for _, raw := range entry.Links {
+		link, ok := parseLinkLocator(raw)
+		if !ok {
+			link = WikiLink{Target: strings.TrimSpace(raw)}
+		}
 		if link.Target == "" || seen[activationLinkKey(link)] {
 			continue
 		}
@@ -668,7 +674,14 @@ func blockExcerpt(content, block string) (string, bool) {
 			continue
 		}
 		start := i
-		for start > 0 && strings.TrimSpace(lines[start-1]) != "" {
+		for start > 0 && strings.TrimSpace(lines[start-1]) == "" {
+			start--
+		}
+		for start > 0 {
+			previous := strings.TrimSpace(lines[start-1])
+			if previous == "" || strings.HasPrefix(previous, "#") || strings.HasPrefix(previous, "^") {
+				break
+			}
 			start--
 		}
 		return strings.TrimSpace(strings.Join(lines[start:i], "\n")), true
@@ -796,7 +809,7 @@ func graphHopDecay(depth int) float64 {
 	return math.Pow(0.6, float64(depth-1))
 }
 
-func (s *Store) addActivationBoostLocked(scores map[string]*ActivationScore, source *ActivationScore, targetID, sourceID, kind, via string, coefficient float64, depth int, now time.Time, opts ActivationOptions) {
+func (s *Store) addActivationBoostLocked(scores map[string]*ActivationScore, source *ActivationScore, targetID, sourceID, kind, via string, coefficient float64, depth int, now time.Time, opts ActivationOptions, located bool) {
 	if targetID == "" || targetID == sourceID {
 		return
 	}
@@ -804,7 +817,7 @@ func (s *Store) addActivationBoostLocked(scores map[string]*ActivationScore, sou
 	if !entryIsActive(target, now) {
 		return
 	}
-	if isConceptEntry(target) {
+	if isConceptEntry(target) && !located {
 		return
 	}
 	boost := source.Score * coefficient * graphHopDecay(depth) * max(target.Weight(now), 0.05)

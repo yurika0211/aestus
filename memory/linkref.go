@@ -40,6 +40,20 @@ func parseWikiLinks(text string) []WikiLink {
 	return out
 }
 
+// parseLinkLocator reads a wikilink or a bare locator such as
+// "Aestus#Memory#^block-0730". Frontmatter links are stored without brackets,
+// but they name the same note, heading, and block as the wikilink in the body.
+func parseLinkLocator(raw string) (WikiLink, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return WikiLink{}, false
+	}
+	if link, ok := parseWikiLink(raw, strings.TrimSuffix(strings.TrimPrefix(raw, "![["), "]]")); ok && (strings.HasPrefix(raw, "[[") || strings.HasPrefix(raw, "![[")) {
+		return link, true
+	}
+	return parseWikiLink("[["+raw+"]]", raw)
+}
+
 func parseWikiLink(raw, inner string) (WikiLink, bool) {
 	link := WikiLink{Raw: raw, Embed: strings.HasPrefix(raw, "!")}
 	body, display, hasDisplay := strings.Cut(inner, "|")

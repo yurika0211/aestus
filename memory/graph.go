@@ -52,7 +52,7 @@ func graphAliasesForEntry(e *Entry) []string {
 func (s *Store) rebuildGraphLocked() {
 	graph := newGraphIndex()
 	for id, entry := range s.entries {
-		links := normalizeLinks(append(entry.Links, extractWikiLinks(entry.Content)...))
+		links := normalizeMemoryLinks(append(entry.Links, extractWikiLinks(entry.Content)...))
 		graph.Forward[id] = links
 		for _, link := range links {
 			for _, key := range graphKeysForLink(link) {

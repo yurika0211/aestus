@@ -269,8 +269,13 @@ func noteWikiLinks(entry *Entry) []writtenWikiLink {
 		seen[key] = true
 		out = append(out, writtenWikiLink{Target: target, Ref: ref})
 	}
-	for _, link := range entry.Links {
-		add(link, GraphLinkRef{})
+	for _, raw := range entry.Links {
+		link, ok := parseLinkLocator(raw)
+		if !ok {
+			add(raw, GraphLinkRef{})
+			continue
+		}
+		add(link.Target, GraphLinkRef{Heading: link.Heading, Block: link.Block, Display: link.Display, Embed: link.Embed})
 	}
 	for _, link := range parseWikiLinks(entry.Content) {
 		add(link.Target, GraphLinkRef{

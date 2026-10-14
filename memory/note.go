@@ -365,11 +365,18 @@ func parseMemoryNote(path, root string) (*Entry, bool, error) {
 	if err != nil {
 		rel = path
 	}
+	// The first Memory section is the note body used for titles and search.
+	// Later sections and their block ids stay attached so a wikilink can name
+	// a block that is not in that first section. Only the note's own trailing
+	// block id is removed; other ^id markers are locators.
 	content := extractMarkdownSection(body, "Memory")
 	if content == "" {
 		content = strings.TrimSpace(bodyWithoutTitle(body))
 	}
-	content = strings.TrimSpace(blockIDPattern.ReplaceAllString(content, ""))
+	if rest := bodyAfterFirstMemory(body); rest != "" {
+		content = strings.TrimSpace(content + "\n\n" + rest)
+	}
+	content = strings.TrimSpace(stripOwnBlockID(content, fm.BlockID))
 	policies, err := policy.Normalize(fm.RoutePolicies)
 	if err != nil {
 		return nil, false, fmt.Errorf("invalid route_policies: %w", err)
@@ -429,6 +436,44 @@ func parseTier(raw string) Tier {
 	}
 }
 
+func bodyAfterFirstMemory(body string) string {
+	lines := strings.Split(body, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "## Memory" {
+			start = i + 1
+			break
+		}
+	}
+	if start < 0 {
+		return ""
+	}
+	for i := start; i < len(lines); i++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "## ") {
+			return strings.TrimSpace(strings.Join(lines[i:], "\n"))
+		}
+	}
+	return ""
+}
+
+func stripOwnBlockID(content, blockID string) string {
+	blockID = strings.TrimSpace(blockID)
+	if blockID == "" {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		if strings.TrimSpace(lines[i]) == "^"+blockID {
+			return strings.TrimSpace(strings.Join(append(lines[:i], lines[i+1:]...), "\n"))
+		}
+		return content
+	}
+	return content
+}
+
 func extractWikiLinks(text string) []string {
 	matches := wikiLinkPattern.FindAllStringSubmatch(text, -1)
 	links := make([]string, 0, len(matches))
@@ -479,6 +524,11 @@ func canonicalMemoryLinkTarget(link string) string {
 	link = strings.TrimSpace(link)
 	if link == "" {
 		return ""
+	}
+	// A heading or block locator names the note, not a second note whose title
+	// is the whole locator. Concept materialization must not create that note.
+	if parsed, ok := parseLinkLocator(link); ok {
+		link = parsed.Target
 	}
 	if rule, ok := conceptRuleForName(link); ok {
 		return rule.Concept

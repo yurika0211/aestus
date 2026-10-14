@@ -392,6 +392,17 @@ func TestActivateExcerptFollowsBlockLink(t *testing.T) {
 	}
 }
 
+func TestBlockExcerptStopsAtTheParagraphAboveTheMarker(t *testing.T) {
+	content := "Aestus\n\n^concept-aestus\n\n## Memory\n\nAestus 的 Memory，块 block-0050。只取这一节。\n\n^block-0050\n\n## Memory\n\nAestus 的 Memory，块 block-0730。只取这一节。\n\n^block-0730\n"
+	excerpt := activationExcerpt(content, "Memory", "block-0730")
+	if excerpt.Missing || excerpt.Block != "block-0730" {
+		t.Fatalf("excerpt = %+v", excerpt)
+	}
+	if excerpt.Context != "Aestus 的 Memory，块 block-0730。只取这一节。" {
+		t.Fatalf("context = %q", excerpt.Context)
+	}
+}
+
 func TestActivateMissingBlockFallsBackToWholeNote(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {
