@@ -49,11 +49,47 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/graph", func(w http.ResponseWriter, r *http.Request) {
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		if limit <= 0 {
+			limit = 80
+		}
+		if limit > 240 {
+			limit = 240
+		}
 		isolated := r.URL.Query().Get("isolated") == "1"
 		writeJSON(w, store.GraphTopology(memory.GraphTopologyOptions{
 			Limit:           limit,
 			IncludeIsolated: isolated,
 		}))
+	})
+	mux.HandleFunc("/api/local", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		depth, _ := strconv.Atoi(r.URL.Query().Get("depth"))
+		if depth <= 0 {
+			depth = 1
+		}
+		if depth > 3 {
+			depth = 3
+		}
+		writeJSON(w, localGraph(store, id, depth))
+	})
+	mux.HandleFunc("/api/note", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		entry, err := store.Get(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		backs := store.BacklinksFor(id)
+		if len(backs) > 12 {
+			backs = backs[:12]
+		}
+		writeJSON(w, map[string]any{
+			"id":        entry.ID,
+			"content":   entry.Content,
+			"category":  entry.Category,
+			"path":      entry.Path,
+			"backlinks": backs,
+		})
 	})
 	mux.HandleFunc("/api/recall", func(w http.ResponseWriter, r *http.Request) {
 		query := strings.TrimSpace(r.URL.Query().Get("q"))
@@ -163,10 +199,16 @@ func seed(store *memory.Store) error {
 func recallResults(results []memory.SearchResult) []map[string]any {
 	out := make([]map[string]any, 0, len(results))
 	for _, result := range results {
-		paths := make([]map[string]string, 0, len(result.Paths))
+		paths := make([]map[string]any, 0, len(result.Paths))
 		for _, path := range result.Paths {
-			paths = append(paths, map[string]string{"from_id": path.FromID, "to_id": path.ToID})
+			paths = append(paths, map[string]any{
+				"from_id": path.FromID,
+				"to_id":   path.ToID,
+				"depth":   path.Depth,
+				"kind":    path.Kind,
+			})
 		}
+		selected := memory.SelectContextText(result.Entry.Content, result.Excerpts)
 		out = append(out, map[string]any{
 			"entry": map[string]any{
 				"id":       result.Entry.ID,
@@ -174,12 +216,81 @@ func recallResults(results []memory.SearchResult) []map[string]any {
 				"category": result.Entry.Category,
 				"tier":     result.Entry.Tier.String(),
 			},
+			"excerpt":     selected,
 			"score":       result.Score,
 			"graph_score": result.GraphScore,
 			"paths":       paths,
 		})
 	}
 	return out
+}
+
+func localGraph(store *memory.Store, id string, depth int) memory.GraphTopology {
+	full := store.GraphTopology(memory.GraphTopologyOptions{Limit: 240})
+	if id == "" {
+		return full
+	}
+	byID := make(map[string][]memory.GraphTopologyEdge, len(full.Edges))
+	nodesByID := make(map[string]memory.GraphTopologyNode, len(full.Nodes))
+	for _, node := range full.Nodes {
+		nodesByID[node.ID] = node
+	}
+	for _, edge := range full.Edges {
+		byID[edge.Source] = append(byID[edge.Source], edge)
+		byID[edge.Target] = append(byID[edge.Target], edge)
+	}
+	neighbors := map[string]int{id: 0}
+	queue := []string{id}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		hop := neighbors[current]
+		if hop >= depth {
+			continue
+		}
+		for _, edge := range byID[current] {
+			next := edge.Target
+			if edge.Target == current {
+				next = edge.Source
+			}
+			if _, seen := neighbors[next]; seen {
+				continue
+			}
+			neighbors[next] = hop + 1
+			queue = append(queue, next)
+		}
+	}
+	nodes := make([]memory.GraphTopologyNode, 0, len(neighbors))
+	for nid := range neighbors {
+		if node, ok := nodesByID[nid]; ok {
+			nodes = append(nodes, node)
+		}
+	}
+	edges := make([]memory.GraphTopologyEdge, 0)
+	seenEdge := map[string]bool{}
+	for nid := range neighbors {
+		for _, edge := range byID[nid] {
+			if _, ok := neighbors[edge.Source]; !ok {
+				continue
+			}
+			if _, ok := neighbors[edge.Target]; !ok {
+				continue
+			}
+			key := edge.Source + "\x00" + edge.Target
+			if seenEdge[key] {
+				continue
+			}
+			seenEdge[key] = true
+			edges = append(edges, edge)
+		}
+	}
+	return memory.GraphTopology{
+		Nodes:      nodes,
+		Edges:      edges,
+		TotalNotes: full.TotalNotes,
+		TotalEdges: len(edges),
+		Unresolved: full.Unresolved,
+	}
 }
 
 func parseTier(raw string) memory.Tier {

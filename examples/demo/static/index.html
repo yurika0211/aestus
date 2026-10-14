@@ -17,41 +17,56 @@
     </aside>
 
     <main>
-      <header class="head">
-        <div>
-          <p class="eyebrow">Memory</p>
-          <h1>知识图谱</h1>
-          <p class="desc">笔记存在 Markdown vault 里。连线来自 <code>[[wikilink]]</code>，召回沿着这些链接走。</p>
-        </div>
-        <button class="ghost" id="refresh" type="button">刷新</button>
-      </header>
-
-      <section class="trace-bar">
-        <label>追踪一条查询
-          <input id="query" placeholder="比如：召回 图谱" spellcheck="false">
-        </label>
-        <select id="depth" title="图跳数">
-          <option value="1">1 跳</option>
-          <option value="2" selected>2 跳</option>
-          <option value="3">3 跳</option>
-        </select>
-        <button class="solid" id="trace" type="button">追踪</button>
-        <button class="mini" id="clear" type="button" hidden>清除</button>
-        <span class="elapsed" id="elapsed"></span>
-      </section>
-
-      <section class="stats" id="stats"></section>
-
       <section class="stage" id="graph-view">
         <div class="canvas">
+          <div class="float top">
+            <input id="query" placeholder="追踪一条记忆" spellcheck="false">
+            <button class="solid" id="trace" type="button">追踪</button>
+            <button class="mini" id="clear" type="button" hidden>清除</button>
+            <span class="elapsed" id="elapsed"></span>
+            <span class="spacer"></span>
+            <button class="ghost" id="fit" type="button">适配</button>
+            <button class="ghost" id="options" type="button">力</button>
+          </div>
+          <div class="float filters">
+            <button class="chip" id="all-notes" type="button">全部</button>
+            <button class="chip" id="around" type="button" disabled>周围</button>
+            <select id="depth" title="图跳数">
+              <option value="1">1 跳</option>
+              <option value="2" selected>2 跳</option>
+              <option value="3">3 跳</option>
+            </select>
+            <label class="toggle"><input id="incoming" type="checkbox" checked>入</label>
+            <label class="toggle"><input id="outgoing" type="checkbox" checked>出</label>
+            <label class="toggle"><input id="unresolved" type="checkbox" checked>未解析</label>
+            <input id="filter" placeholder="过滤" spellcheck="false">
+            <input id="isolated" type="checkbox" hidden>
+          </div>
+          <section class="playbar float play" id="playbar" hidden>
+            <button class="mini" id="play-reset" type="button">重置</button>
+            <button class="mini" id="play-back" type="button">上一步</button>
+            <button class="solid" id="play" type="button">播放</button>
+            <button class="mini" id="play-step" type="button">下一步</button>
+            <span class="elapsed" id="playhead"></span>
+          </section>
+          <section class="options float panel" id="options-panel" hidden>
+            <label>中心 <input id="force-center" type="range" min="0" max="1" step="0.01" value="0.1"></label>
+            <label>排斥 <input id="force-repel" type="range" min="0" max="20" step="0.1" value="10"></label>
+            <label>链接 <input id="force-link" type="range" min="0" max="1" step="0.01" value="1"></label>
+            <label>距离 <input id="force-distance" type="range" min="30" max="500" step="1" value="250"></label>
+            <label>节点 <input id="node-size" type="range" min="0.4" max="2.4" step="0.1" value="1"></label>
+            <label>线宽 <input id="line-size" type="range" min="0.4" max="2.4" step="0.1" value="1"></label>
+            <label>文字 <input id="text-fade" type="range" min="-2" max="2" step="0.1" value="0"></label>
+            <label class="toggle"><input id="arrows" type="checkbox">箭头</label>
+            <button class="mini" id="force-reset" type="button">默认</button>
+          </section>
           <svg id="graph" viewBox="0 0 1200 760" role="img" aria-label="记忆图谱"></svg>
-          <div class="legend">
-            <span><i class="dot fact"></i>事实</span>
-            <span><i class="dot rule"></i>规则</span>
-            <span><i class="dot project"></i>项目</span>
-            <span><i class="dot preference"></i>偏好</span>
-            <span><i class="dot concept"></i>概念</span>
-            <span><i class="ring"></i>尚未写下来的链接</span>
+          <div class="legend" id="legend">
+            <span><i class="dot low"></i>1–2 条链接</span>
+            <span><i class="dot mid"></i>3–5</span>
+            <span><i class="dot high"></i>6–11</span>
+            <span><i class="dot hub"></i>12+</span>
+            <span><i class="ring"></i>未解析</span>
           </div>
         </div>
         <aside class="detail" id="detail">
