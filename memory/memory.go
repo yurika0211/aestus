@@ -482,6 +482,12 @@ type SearchOptions struct {
 	GraphDepth      int
 	Explain         bool
 	SkipAccessStats bool
+	// RerankPool keeps this many first-stage hits and compares them to each
+	// other before cutting the list. Zero leaves the first-stage order alone.
+	RerankPool int
+	// RerankLimit is the number of notes returned after that comparison. Zero
+	// uses Limit.
+	RerankLimit int
 }
 
 // SearchResult contains a memory entry plus ranking/explanation signals.
@@ -525,20 +531,44 @@ func (s *Store) SearchWithOptions(query string, opts SearchOptions) []SearchResu
 	if opts.IncludeInactive || opts.IncludeExpired || customAsOf {
 		return s.searchEntriesWithOptions(query, opts)
 	}
+	// The comparison stage needs the neighbors of every note in the pool, so the
+	// first stage must retrieve the pool before the final cut. Paths stay on the
+	// scores either way; Explain only decides whether a result exposes them.
+	retrievalLimit := activationLimit
+	if opts.RerankPool > retrievalLimit {
+		retrievalLimit = opts.RerankPool
+	}
 	scores := s.Activate(query, ActivationOptions{
-		Limit:             activationLimit,
+		Limit:             retrievalLimit,
 		IncludeGraph:      opts.IncludeGraph,
 		MaxGraphDepth:     opts.GraphDepth,
 		MaxGraphBoost:     0.45,
 		MaxGraphSeeds:     12,
 		UpdateAccessStats: !opts.SkipAccessStats,
-		Explain:           opts.Explain,
+		Explain:           true,
 	})
+	filtered := scores[:0]
+	for _, score := range scores {
+		if memorySearchResultAllowed(score.Entry, opts) {
+			filtered = append(filtered, score)
+		}
+	}
+	scores = filtered
+	if opts.RerankPool > 1 {
+		pool := opts.RerankPool
+		if pool > len(scores) {
+			pool = len(scores)
+		}
+		limit := opts.RerankLimit
+		if limit <= 0 {
+			limit = opts.Limit
+		}
+		scores = rerankRecalledPairs(scores[:pool], limit)
+	} else if opts.Limit > 0 && len(scores) > opts.Limit {
+		scores = scores[:opts.Limit]
+	}
 	results := make([]SearchResult, 0, len(scores))
 	for _, score := range scores {
-		if !memorySearchResultAllowed(score.Entry, opts) {
-			continue
-		}
 		result := SearchResult{
 			Entry:       score.Entry,
 			Score:       score.Score,
@@ -550,9 +580,6 @@ func (s *Store) SearchWithOptions(query string, opts SearchOptions) []SearchResu
 			result.Paths = score.Paths
 		}
 		results = append(results, result)
-		if opts.Limit > 0 && len(results) >= opts.Limit {
-			break
-		}
 	}
 	return results
 }
