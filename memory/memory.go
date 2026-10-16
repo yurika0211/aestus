@@ -589,6 +589,7 @@ func (s *Store) searchEntriesWithOptions(query string, opts SearchOptions) []Sea
 	queryTerms := extractQueryTerms(queryLower)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	stats := s.termStatsLocked(opts.AsOf)
 	results := make([]SearchResult, 0, len(s.entries))
 	for _, e := range s.entries {
 		if e == nil || isConceptEntry(e) {
@@ -603,7 +604,7 @@ func (s *Store) searchEntriesWithOptions(query string, opts SearchOptions) []Sea
 		if !memorySearchResultAllowed(*e, opts) {
 			continue
 		}
-		components := matchActivation(e, queryLower, queryTerms)
+		components := matchActivation(e, queryLower, queryTerms, stats)
 		matchScore := components.MatchScore()
 		if matchScore <= 0 {
 			continue

@@ -14,10 +14,11 @@ func rerankRecalledPairs(pool []ActivationScore, limit int) []ActivationScore {
 		return pool
 	}
 	n := len(pool)
+	rare := rareTermsInPool(pool)
 	aggregate := make([]float64, n)
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
-			if !relatedPair(pool[i], pool[j]) {
+			if !relatedPair(pool[i], pool[j]) && !shareRareTerm(pool[i], pool[j], rare) {
 				continue
 			}
 			// Related notes are one piece of evidence. Each one is lifted past the
@@ -56,14 +57,18 @@ func relatedPair(left, right ActivationScore) bool {
 	return sameState(left.Entry, right.Entry) || linkedPair(left, right) || aliasOverlap(left.Entry, right.Entry)
 }
 
-// pairwiseLift is how far note i has to move to stay with note j. Notes already
-// ahead of their related note, and notes that only repeat common query words,
-// stay where the first stage put them.
+// pairwiseLift moves both notes of a related pair up to that pair's higher
+// score. The note that was already ahead still gets a token, so an unrelated
+// note cannot sit between them. Unrelated notes are never passed in.
 func pairwiseLift(pool []ActivationScore, i, j int) float64 {
-	if pool[i].Score >= pool[j].Score {
-		return 0
+	peak := pool[j].Score
+	if pool[i].Score > peak {
+		peak = pool[i].Score
 	}
-	return pool[j].Score - pool[i].Score + 0.001
+	if pool[i].Score >= peak {
+		return 0.001
+	}
+	return peak - pool[i].Score + 0.001
 }
 
 func betterPairwiseRank(pool []ActivationScore, aggregate []float64, left, right int) bool {
@@ -74,6 +79,46 @@ func betterPairwiseRank(pool []ActivationScore, aggregate []float64, left, right
 		return pool[left].Score > pool[right].Score
 	}
 	return pool[left].Entry.CreatedAt.After(pool[right].Entry.CreatedAt)
+}
+
+// rareTermsInPool keeps a term only when two or three of the recalled notes
+// contain it. A term in most of the pool is chatter; a term in one note cannot
+// show that two notes belong together.
+func rareTermsInPool(pool []ActivationScore) map[string]int {
+	counts := map[string]int{}
+	for _, score := range pool {
+		for _, term := range dedupSlice(extractQueryTerms(score.Entry.Content)) {
+			if len([]rune(term)) < 3 {
+				continue
+			}
+			counts[term]++
+		}
+	}
+	rare := map[string]int{}
+	for term, count := range counts {
+		if count >= 2 && count <= 3 {
+			rare[term] = count
+		}
+	}
+	return rare
+}
+
+func shareRareTerm(left, right ActivationScore, rare map[string]int) bool {
+	if len(rare) == 0 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, term := range extractQueryTerms(left.Entry.Content) {
+		if rare[term] > 0 {
+			seen[term] = true
+		}
+	}
+	for _, term := range extractQueryTerms(right.Entry.Content) {
+		if seen[term] {
+			return true
+		}
+	}
+	return false
 }
 
 func sameState(left, right Entry) bool {

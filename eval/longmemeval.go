@@ -62,6 +62,9 @@ type LongMemEvalMetrics struct {
 	RecallAll map[int]float64    `json:"recall_all"`
 	RecallAny map[int]float64    `json:"recall_any"`
 	NDCGAny   map[int]float64    `json:"ndcg_any"`
+	// AbstentionEmpty is the share of abstention questions whose top 5 is empty.
+	// Official retrieval scoring skips these questions; this reports them separately.
+	AbstentionEmpty float64 `json:"abstention_empty_at_5"`
 }
 
 // LoadLongMemEval reads one released JSON file. The oracle file is about 15 MB.
@@ -100,11 +103,20 @@ func EvaluateLongMemEvalRetrieval(instances []LongMemEvalInstance, opts SearchEv
 	ndcgSum := map[int]float64{}
 
 	for _, instance := range instances {
-		if strings.HasSuffix(instance.QuestionID, "_abs") {
+		abstention := strings.HasSuffix(instance.QuestionID, "_abs")
+		if abstention {
 			metrics.Skipped++
-			continue
 		}
 		ranked, err := RetrieveLongMemEval(instance, opts)
+		if err != nil {
+			return LongMemEvalMetrics{}, fmt.Errorf("%s: %w", instance.QuestionID, err)
+		}
+		if abstention {
+			if len(ranked) == 0 {
+				metrics.AbstentionEmpty += 1
+			}
+			continue
+		}
 		if err != nil {
 			return LongMemEvalMetrics{}, fmt.Errorf("%s: %w", instance.QuestionID, err)
 		}
@@ -131,6 +143,9 @@ func EvaluateLongMemEvalRetrieval(instances []LongMemEvalInstance, opts SearchEv
 	for questionType, total := range typeTotal {
 		metrics.ByType[questionType] = ratio(typeAll[questionType], total)
 		metrics.ByTypeAny[questionType] = ratio(typeAny[questionType], total)
+	}
+	if metrics.Skipped > 0 {
+		metrics.AbstentionEmpty = metrics.AbstentionEmpty / float64(metrics.Skipped)
 	}
 	return metrics, nil
 }

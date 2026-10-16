@@ -158,7 +158,7 @@ func (s *Store) Activate(query string, opts ActivationOptions) []ActivationScore
 
 	if !opts.UpdateAccessStats {
 		s.mu.RLock()
-		activated := s.activateLocked(queryLower, queryTerms, now, opts)
+		activated := s.activateLocked(queryLower, queryTerms, s.termStatsLocked(now), now, opts)
 		reranker := s.activationReranker
 		s.mu.RUnlock()
 		if len(activated) == 0 {
@@ -171,7 +171,7 @@ func (s *Store) Activate(query string, opts ActivationOptions) []ActivationScore
 	}
 
 	s.mu.Lock()
-	activated := s.activateLocked(queryLower, queryTerms, now, opts)
+	activated := s.activateLocked(queryLower, queryTerms, s.termStatsLocked(now), now, opts)
 	if len(activated) == 0 {
 		s.mu.Unlock()
 		return []ActivationScore{}
@@ -231,7 +231,7 @@ func activationScoresToEntries(scores []ActivationScore) []Entry {
 	return entries
 }
 
-func (s *Store) activateLocked(queryLower string, queryTerms []string, now time.Time, opts ActivationOptions) []ActivationScore {
+func (s *Store) activateLocked(queryLower string, queryTerms []string, stats termStats, now time.Time, opts ActivationOptions) []ActivationScore {
 	scores := make(map[string]*ActivationScore)
 	collectGraphSeeds := opts.IncludeGraph && s.graph != nil && opts.MaxGraphDepth > 0
 	var graphSeeds []string
@@ -246,7 +246,7 @@ func (s *Store) activateLocked(queryLower string, queryTerms []string, now time.
 		if isConceptEntry(e) {
 			continue
 		}
-		components := matchActivation(e, queryLower, queryTerms)
+		components := matchActivation(e, queryLower, queryTerms, stats)
 		matchScore := components.MatchScore()
 		if matchScore <= 0 {
 			continue
@@ -369,7 +369,7 @@ func activationSeedBetter(leftID, rightID string, scores map[string]*ActivationS
 	return left.DirectScore > right.DirectScore
 }
 
-func matchActivation(e *Entry, queryLower string, queryTerms []string) ActivationComponents {
+func matchActivation(e *Entry, queryLower string, queryTerms []string, stats termStats) ActivationComponents {
 	if e == nil {
 		return ActivationComponents{}
 	}
@@ -393,7 +393,6 @@ func matchActivation(e *Entry, queryLower string, queryTerms []string) Activatio
 			continue
 		}
 		if strings.Contains(contentLower, term) {
-			components.Lexical += 0.22
 			termHits++
 			continue
 		}
@@ -402,8 +401,8 @@ func matchActivation(e *Entry, queryLower string, queryTerms []string) Activatio
 			termHits++
 		}
 	}
-	if termHits >= 2 {
-		components.Lexical += 0.25
+	if termHits > 0 {
+		components.Lexical += termCoverage(e.Content, queryTerms, stats)
 	}
 
 	for _, tag := range e.Tags {

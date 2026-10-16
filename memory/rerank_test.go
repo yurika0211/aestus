@@ -86,6 +86,24 @@ func TestPairwiseRerankIsOffUnlessRequested(t *testing.T) {
 	}
 }
 
+func TestRareTermKeepsTwoEvidenceNotesTogether(t *testing.T) {
+	pool := []ActivationScore{
+		{EntryID: "chat", Score: 1.4, Entry: Entry{Content: "跑鞋广告播了一整晚"}},
+		{EntryID: "one", Score: 1.2, Entry: Entry{Content: "Brooks Ghost 跑鞋是周三买的"}},
+		{EntryID: "two", Score: 0.4, Entry: Entry{Content: "退货单上写着 Brooks Ghost"}},
+		{EntryID: "more", Score: 1.1, Entry: Entry{Content: "又看了一条跑鞋评测"}},
+		{EntryID: "sale", Score: 1.0, Entry: Entry{Content: "跑鞋店周末打折"}},
+	}
+	reranked := rerankRecalledPairs(pool, 2)
+	got := map[string]bool{}
+	for _, score := range reranked {
+		got[score.EntryID] = true
+	}
+	if len(reranked) != 2 || !got["one"] || !got["two"] {
+		t.Fatalf("reranked = %#v, want the two notes that share Brooks Ghost", reranked)
+	}
+}
+
 func TestPairwiseLiftDoesNotDependOnPairOrder(t *testing.T) {
 	pool := []ActivationScore{
 		{EntryID: "a", Score: 2, Entry: Entry{ID: "a", StateKey: "purchase.shoes"}},
@@ -94,11 +112,11 @@ func TestPairwiseLiftDoesNotDependOnPairOrder(t *testing.T) {
 	if !relatedPair(pool[0], pool[1]) || !relatedPair(pool[1], pool[0]) {
 		t.Fatal("the same state key must relate the pair in both directions")
 	}
-	if pairwiseLift(pool, 0, 1) != 0 {
-		t.Fatal("the note already ahead of its related note was lifted")
+	if pairwiseLift(pool, 0, 1) <= 0 || pairwiseLift(pool, 1, 0) <= 0 {
+		t.Fatal("both notes in a related pair must stay ahead of unrelated notes")
 	}
-	if pairwiseLift(pool, 1, 0) <= 0 {
-		t.Fatal("the note behind its related note was not lifted")
+	if pairwiseLift(pool, 1, 0) <= pairwiseLift(pool, 0, 1) {
+		t.Fatal("the note behind its pair was not lifted further than the one already ahead")
 	}
 }
 

@@ -1,7 +1,100 @@
 // Lexical match score shared by search and temporal candidate selection.
 package memory
 
-import "strings"
+import (
+	"math"
+	"strings"
+	"time"
+)
+
+const (
+	bm25K1 = 1.2
+	bm25B  = 0.75
+)
+
+// termStats is counted from the notes being searched. It is derived data:
+// losing it only means the next search counts again.
+type termStats struct {
+	docs      int
+	avgLength float64
+	df        map[string]int
+}
+
+func (s *Store) termStatsLocked(now time.Time) termStats {
+	stats := termStats{df: map[string]int{}}
+	var totalLength int
+	for _, entry := range s.entries {
+		if entry == nil || isConceptEntry(entry) || !entryIsActive(entry, now) {
+			continue
+		}
+		stats.docs++
+		length := len([]rune(entry.Content))
+		if length == 0 {
+			length = 1
+		}
+		totalLength += length
+		for _, term := range extractQueryTerms(entry.Content) {
+			stats.df[term]++
+		}
+	}
+	if stats.docs > 0 {
+		stats.avgLength = float64(totalLength) / float64(stats.docs)
+	}
+	if stats.avgLength <= 0 {
+		stats.avgLength = 1
+	}
+	return stats
+}
+
+// rarity is high for a term that appears in few notes and zero for a term
+// that appears in most of them. A missing term contributes nothing.
+func (s termStats) rarity(term string) float64 {
+	if s.docs <= 0 {
+		return 0
+	}
+	docsWithTerm := s.df[term]
+	if docsWithTerm <= 0 {
+		return 0
+	}
+	return math.Log(1 + (float64(s.docs)-float64(docsWithTerm)+0.5)/(float64(docsWithTerm)+0.5))
+}
+
+// termCoverage is the share of the query's term weight found in one note.
+// Repeated occurrences saturate, and a long note gets less credit than a
+// short note for the same occurrence count.
+func termCoverage(content string, queryTerms []string, stats termStats) float64 {
+	length := len([]rune(content))
+	if length <= 0 {
+		length = 1
+	}
+	normalizer := 1 - bm25B + bm25B*float64(length)/stats.avgLength
+	if normalizer <= 0 {
+		normalizer = 1
+	}
+	var weighted, total float64
+	seen := map[string]bool{}
+	for _, term := range queryTerms {
+		if term == "" || seen[term] {
+			continue
+		}
+		seen[term] = true
+		weight := stats.rarity(term)
+		if weight <= 0 {
+			continue
+		}
+		total += weight
+		occurrences := strings.Count(strings.ToLower(content), term)
+		if occurrences <= 0 {
+			continue
+		}
+		saturated := float64(occurrences) * (bm25K1 + 1) / (float64(occurrences) + bm25K1*normalizer)
+		weighted += weight * saturated
+	}
+	if total <= 0 {
+		return 0
+	}
+	return weighted / total
+}
 
 func memoryMatchScore(e *Entry, queryLower string, queryTerms []string) float64 {
 	if e == nil {
