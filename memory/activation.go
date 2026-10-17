@@ -12,6 +12,10 @@ import (
 type ActivationOptions struct {
 	Limit        int
 	IncludeGraph bool
+	// EntryFilter restricts the candidate set before seed selection, graph
+	// propagation, ranking and temporal state resolution. It runs under the
+	// store read lock and must be pure (never call back into the Store).
+	EntryFilter func(Entry) bool
 	// MaxGraphDepth bounds how many hops the graph spread walks outward from the
 	// seed set (breadth-first). Depth 1 matches the original single-hop spread;
 	// deeper hops apply an additional decay so distant notes contribute less.
@@ -232,6 +236,29 @@ func activationScoresToEntries(scores []ActivationScore) []Entry {
 }
 
 func (s *Store) activateLocked(queryLower string, queryTerms []string, now time.Time, opts ActivationOptions) []ActivationScore {
+	// Resolve states over the entire visible set before top-K, so a stale
+	// lexical hit cannot displace the current version or influence graph spread.
+	visible := make([]Entry, 0, len(s.entries))
+	for _, entry := range s.entries {
+		if entryIsActive(entry, now) && (opts.EntryFilter == nil || opts.EntryFilter(*entry)) {
+			visible = append(visible, *entry)
+		}
+	}
+	active, _, _ := resolveActiveTemporalEntries(visible)
+	view := &Store{entries: make(map[string]*Entry, len(active)), graph: s.graph}
+	for i := range active {
+		entry := &active[i]
+		view.entries[entry.ID] = entry
+	}
+	if opts.EntryFilter != nil {
+		// An invisible alias owner must not make a visible name ambiguous;
+		// invisible intermediary nodes must never participate in graph walks.
+		view.rebuildGraphLocked()
+	}
+	return view.activateCandidatesLocked(queryLower, queryTerms, now, opts)
+}
+
+func (s *Store) activateCandidatesLocked(queryLower string, queryTerms []string, now time.Time, opts ActivationOptions) []ActivationScore {
 	scores := make(map[string]*ActivationScore)
 	collectGraphSeeds := opts.IncludeGraph && s.graph != nil && opts.MaxGraphDepth > 0
 	var graphSeeds []string

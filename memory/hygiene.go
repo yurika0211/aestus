@@ -44,7 +44,7 @@ type HygieneReport struct {
 
 var (
 	rawConversationPrefixRe = regexp.MustCompile(`(?i)^\s*(user|assistant|system)\s*:`)
-	secretLikeRe            = regexp.MustCompile(`(?i)(api[_-]?key|access[_-]?token|secret|password|passwd|bearer\s+[a-z0-9._~+/-]{16,}|sk-[a-z0-9]{16,}|xox[baprs]-[a-z0-9-]{10,})`)
+	secretLikeRe            = regexp.MustCompile(`(?i)(api[_-]?key|access[_-]?token|bot[_-]?token\s*=|secret|password|passwd|bearer\s+[a-z0-9._~+/-]{16,}|sk-[a-z0-9]{16,}|xox[baprs]-[a-z0-9-]{10,})`)
 	promptInjectionRe       = regexp.MustCompile(`(?i)(ignore (all )?(previous|prior) instructions|system prompt|developer message|you are now|jailbreak|do not obey|泄露.*提示词|忽略.*指令|越狱)`)
 )
 
