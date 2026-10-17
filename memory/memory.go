@@ -1039,40 +1039,7 @@ func (s *Store) Decay(threshold float64) int {
 func (s *Store) Summarize(ids []string, summary string, category string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	// 验证原始条目存在
-	var sourceIDs []string
-	for _, id := range ids {
-		if _, ok := s.entries[id]; ok {
-			sourceIDs = append(sourceIDs, id)
-		}
-	}
-
-	if len(sourceIDs) == 0 {
-		return fmt.Errorf("no valid source entries to summarize")
-	}
-
-	// 创建摘要条目
-	now := time.Now()
-	entry := &Entry{
-		ID:         s.generateID(),
-		Content:    summary,
-		Category:   category,
-		Tier:       TierMedium,
-		Importance: 0.6,
-		CreatedAt:  now,
-		AccessedAt: now,
-		SummaryOf:  sourceIDs,
-	}
-	s.entries[entry.ID] = entry
-
-	// 删除原始条目
-	for _, id := range sourceIDs {
-		s.removeEntryFileLocked(id)
-		delete(s.entries, id)
-	}
-
-	return s.persist()
+	return s.summarizeLocked(ids, summary, category)
 }
 
 // Stats 返回记忆统计

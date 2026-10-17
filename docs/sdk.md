@@ -75,6 +75,21 @@ create authentication or authorization.
 
 ## Writes, cancellation and failures
 
+`CompactShortTerm(ctx, CompactionOptions{KeepRecent: 5, MaxSummaryRunes: 500})`
+compacts older durable short-tier facts separately for each category, normalized
+tag set and expiry/valid-until window. Selection and replacement share the Store
+mutex. Recent facts are retained; contents that do not fit remain intact. State,
+supersedes and route-policy records are excluded. Summaries preserve scope tags,
+end bounds, links and aliases, and use the latest validity start and lowest
+confidence of their sources. They belong in the fact vault, never a conversation
+summary store with different visibility rules.
+
+Legacy `Summarize` applies the same compatibility checks and rejects missing,
+inactive, structured or incompatible sources before mutation. Both APIs persist
+the summary before removing source files and return persistence/deletion errors.
+They provide serialization within one Store, not cross-file crash atomicity;
+an I/O error can leave a partial commit and must not trigger an automatic retry.
+
 - Empty mode means append; modes are append, upsert_state and supersede. Results
   include the actual ID/path, created/updated flags and superseded IDs. Repeating
   an identical state update preserves the current ID without self-supersession.
