@@ -96,6 +96,10 @@ create authentication or authorization.
   and reranker telemetry hooks can have their own effects.
 - Close releases owned optional resources, including the installed reranker.
   The host controls startup, shutdown and error presentation.
+- Get returns a record-value snapshot instead of a live mutable record. Treat
+  nested metadata in all read results as read-only; host DTO adapters can copy
+  it before exposing mutable application values. Policy normalization does not
+  modify metadata already published to readers.
 
 ## Compatibility
 

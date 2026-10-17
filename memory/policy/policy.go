@@ -43,6 +43,12 @@ func Normalize(policies []RoutePolicy) ([]RoutePolicy, error) {
 			return nil, fmt.Errorf("duplicate route policy id %q", policy.ID)
 		}
 		seen[key] = struct{}{}
+		// Normalize a new policy value without changing metadata already
+		// published to readers (or the caller's request slices).
+		policy.Match.QueryAll = append([]RouteTermGroup(nil), policy.Match.QueryAll...)
+		policy.Match.States = append([]RouteStateMatch(nil), policy.Match.States...)
+		policy.Risks = append([]RouteRisk(nil), policy.Risks...)
+		policy.RequiredTools = append([]RouteToolRequirement(nil), policy.RequiredTools...)
 		policy.Match.QueryAny = dedupTrimmed(policy.Match.QueryAny)
 		policy.Match.QueryNone = dedupTrimmed(policy.Match.QueryNone)
 		for i := range policy.Match.QueryAll {

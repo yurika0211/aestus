@@ -385,7 +385,8 @@ func (s *Store) Expire() int {
 	return len(toDelete)
 }
 
-// Get 按 ID 获取记忆
+// Get returns a record-value snapshot under the read lock. Nested metadata
+// must be treated as read-only, just like values returned by search.
 func (s *Store) Get(id string) (*Entry, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -394,7 +395,8 @@ func (s *Store) Get(id string) (*Entry, error) {
 	if !ok {
 		return nil, fmt.Errorf("memory not found: %s", id)
 	}
-	return e, nil
+	entry := *e
+	return &entry, nil
 }
 
 // ActiveStateIDs returns active memory IDs for a temporal state key.
