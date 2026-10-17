@@ -146,6 +146,20 @@ func (s *Store) SaveWithOptions(content, category string, tier Tier, importance 
 func (s *Store) SaveWithOptionsResult(content, category string, tier Tier, importance float64, opts SaveOptions) (SaveResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	result, err := s.saveWithOptionsResultLocked(content, category, tier, importance, opts, nil)
+	if err != nil || result.ID == "" {
+		return result, err
+	}
+	if err := s.persist(); err != nil {
+		return SaveResult{}, err
+	}
+	result.Path = s.entries[result.ID].Path
+	return result, nil
+}
+
+// saveWithOptionsResultLocked stages a write. The caller owns the lock and
+// persists once after any related state transitions have also been staged.
+func (s *Store) saveWithOptionsResultLocked(content, category string, tier Tier, importance float64, opts SaveOptions, filter func(Entry) bool) (SaveResult, error) {
 
 	content = sanitizeDurableMemoryContent(content)
 	category = strings.TrimSpace(category)
@@ -164,6 +178,9 @@ func (s *Store) SaveWithOptionsResult(content, category string, tier Tier, impor
 	// 去重检查：同 category + 同 content（忽略前后空白）不重复写入
 	normalized := strings.TrimSpace(content)
 	for _, e := range s.entries {
+		if filter != nil && !filter(*e) {
+			continue
+		}
 		if strings.EqualFold(strings.TrimSpace(e.Content), normalized) &&
 			strings.EqualFold(e.Category, category) {
 			// 已存在：更新访问时间和标签，但不重复写入
@@ -220,9 +237,6 @@ func (s *Store) SaveWithOptionsResult(content, category string, tier Tier, impor
 			}
 			e.Links = normalizeMemoryLinks(append(e.Links, extractWikiLinks(e.Content)...))
 			e.Aliases = dedupSlice(e.Aliases)
-			if err := s.persist(); err != nil {
-				return SaveResult{}, err
-			}
 			return SaveResult{
 				ID:              e.ID,
 				Path:            e.Path,
@@ -265,9 +279,6 @@ func (s *Store) SaveWithOptionsResult(content, category string, tier Tier, impor
 	entry.BlockID = blockIDForEntry(entry.ID)
 	entry.Links = entryLinks
 	s.entries[entry.ID] = entry
-	if err := s.persist(); err != nil {
-		return SaveResult{}, err
-	}
 	return SaveResult{
 		ID:      entry.ID,
 		Path:    entry.Path,
@@ -374,7 +385,8 @@ func (s *Store) Expire() int {
 	return len(toDelete)
 }
 
-// Get 按 ID 获取记忆
+// Get returns a record-value snapshot under the read lock. Nested metadata
+// must be treated as read-only, just like values returned by search.
 func (s *Store) Get(id string) (*Entry, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -383,7 +395,8 @@ func (s *Store) Get(id string) (*Entry, error) {
 	if !ok {
 		return nil, fmt.Errorf("memory not found: %s", id)
 	}
-	return e, nil
+	entry := *e
+	return &entry, nil
 }
 
 // ActiveStateIDs returns active memory IDs for a temporal state key.
@@ -472,6 +485,8 @@ func (s *Store) Search(query string) []Entry {
 
 // SearchOptions controls durable memory search from tool/API callers.
 type SearchOptions struct {
+	// EntryFilter is applied before activation/top-K, including graph walks.
+	EntryFilter     func(Entry) bool
 	Limit           int
 	Category        string
 	Tier            *Tier
@@ -525,7 +540,14 @@ func (s *Store) SearchWithOptions(query string, opts SearchOptions) []SearchResu
 	if opts.IncludeInactive || opts.IncludeExpired || customAsOf {
 		return s.searchEntriesWithOptions(query, opts)
 	}
+	filter := opts.EntryFilter
+	if strings.TrimSpace(opts.Category) != "" || opts.Tier != nil {
+		filter = func(entry Entry) bool {
+			return (opts.EntryFilter == nil || opts.EntryFilter(entry)) && memorySearchResultAllowed(entry, opts)
+		}
+	}
 	scores := s.Activate(query, ActivationOptions{
+		EntryFilter:       filter,
 		Limit:             activationLimit,
 		IncludeGraph:      opts.IncludeGraph,
 		MaxGraphDepth:     opts.GraphDepth,
@@ -565,6 +587,9 @@ func (s *Store) searchEntriesWithOptions(query string, opts SearchOptions) []Sea
 	results := make([]SearchResult, 0, len(s.entries))
 	for _, e := range s.entries {
 		if e == nil || isConceptEntry(e) {
+			continue
+		}
+		if opts.EntryFilter != nil && !opts.EntryFilter(*e) {
 			continue
 		}
 		if !opts.IncludeInactive && !entryIsActive(e, opts.AsOf) {
@@ -719,7 +744,9 @@ func (s *Store) Route(query string) RouteAnalysis {
 
 // RouteWithOptions evaluates typed policies on recalled memories visible to the caller.
 func (s *Store) RouteWithOptions(query string, opts RouteOptions) RouteAnalysis {
-	scores := s.Activate(query, RouteActivationOptions())
+	activation := RouteActivationOptions()
+	activation.EntryFilter = opts.EntryFilter
+	scores := s.Activate(query, activation)
 	entries := activationScoresToEntries(scores)
 	excerpts := routeExcerpts(activationExcerptsByID(scores))
 	if opts.EntryFilter != nil {
@@ -789,10 +816,16 @@ func (s *Store) resolveTemporal(query string, activeEntries []Entry, filter func
 	activeIDs := make(map[string]bool, len(activeEntries))
 	activeLinks := make(map[string]bool)
 	activeStateKeys := make(map[string]bool)
+	selectedStates := make(map[string]Entry)
+	explicitSuperseded := make(map[string]bool)
 	for _, e := range activeEntries {
 		activeIDs[e.ID] = true
 		if e.StateKey != "" {
 			activeStateKeys[strings.ToLower(e.StateKey)] = true
+			selectedStates[strings.ToLower(e.StateKey)] = e
+		}
+		for _, id := range e.Supersedes {
+			explicitSuperseded[id] = true
 		}
 		for _, link := range e.Links {
 			activeLinks[graphKey(link)] = true
@@ -812,7 +845,13 @@ func (s *Store) resolveTemporal(query string, activeEntries []Entry, filter func
 			continue
 		}
 		ref := refForEntry(e)
-		switch temporalInactiveReason(e, now) {
+		reason := temporalInactiveReason(e, now)
+		if explicitSuperseded[id] {
+			reason = "superseded"
+		} else if selected, ok := selectedStates[strings.ToLower(e.StateKey)]; ok && temporalEntryAfter(selected, *e) {
+			reason = "superseded"
+		}
+		switch reason {
 		case "conflict":
 			resolution.ConflictRefs = append(resolution.ConflictRefs, ref)
 			resolution.Notes = append(resolution.Notes, "Conflict memory present: "+ref+". Do not silently merge it with active memories.")
@@ -881,6 +920,34 @@ func (s *Store) ByTier(tier Tier) []Entry {
 		return results[i].CreatedAt.After(results[j].CreatedAt)
 	})
 	return results
+}
+
+// ByTierWithOptions resolves current facts within the caller's visible set
+// before selecting a tier. A current version in a different tier still hides
+// the version it replaces. This is the context/profile read path; ByTier keeps
+// its legacy listing semantics for administrative callers.
+func (s *Store) ByTierWithOptions(tier Tier, opts RouteOptions) []Entry {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	now := time.Now()
+	var visible []Entry
+	for _, entry := range s.entries {
+		if entryIsActive(entry, now) && (opts.EntryFilter == nil || opts.EntryFilter(*entry)) {
+			visible = append(visible, *entry)
+		}
+	}
+	selected, _, _ := resolveActiveTemporalEntries(visible)
+	var result []Entry
+	for _, entry := range selected {
+		if entry.Tier == tier && !isConceptEntry(&entry) {
+			result = append(result, entry)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].CreatedAt.After(result[j].CreatedAt) })
+	return result
 }
 
 // ByCategory 返回指定分类的记忆
@@ -972,40 +1039,7 @@ func (s *Store) Decay(threshold float64) int {
 func (s *Store) Summarize(ids []string, summary string, category string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	// 验证原始条目存在
-	var sourceIDs []string
-	for _, id := range ids {
-		if _, ok := s.entries[id]; ok {
-			sourceIDs = append(sourceIDs, id)
-		}
-	}
-
-	if len(sourceIDs) == 0 {
-		return fmt.Errorf("no valid source entries to summarize")
-	}
-
-	// 创建摘要条目
-	now := time.Now()
-	entry := &Entry{
-		ID:         s.generateID(),
-		Content:    summary,
-		Category:   category,
-		Tier:       TierMedium,
-		Importance: 0.6,
-		CreatedAt:  now,
-		AccessedAt: now,
-		SummaryOf:  sourceIDs,
-	}
-	s.entries[entry.ID] = entry
-
-	// 删除原始条目
-	for _, id := range sourceIDs {
-		s.removeEntryFileLocked(id)
-		delete(s.entries, id)
-	}
-
-	return s.persist()
+	return s.summarizeLocked(ids, summary, category)
 }
 
 // Stats 返回记忆统计

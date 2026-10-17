@@ -2,7 +2,11 @@
 
 Aestus is a file first memory library for Go agents. It stores durable memories as Obsidian compatible Markdown, so the vault remains portable, inspectable, and useful without a database or a hosted service.
 
-Aestus was extracted from [LuckyAgent](https://github.com/yurika0211/luckyagent). The package name remains `memory` to keep the extracted API small and familiar; LuckyAgent may later consume Aestus as a normal Go module.
+Aestus was extracted from [LuckyAgent](https://github.com/yurika0211/lucky-agent). The package name remains `memory` to keep the extracted API small and familiar. Agent runtimes can consume Aestus as a normal Go module.
+
+Requires Go 1.25 or newer. Use the typed `Store.Remember` and `Store.Recall`
+entry points without importing a provider or tool runtime. See the
+[SDK contract](docs/sdk.md) for scopes, cancellation and write guarantees.
 
 ## Layers
 
