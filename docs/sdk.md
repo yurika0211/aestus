@@ -39,7 +39,9 @@ _ = results // Render the returned structured evidence in the host.
 return err
 ```
 
-Full runnable setup is in `examples/basic`.
+Full runnable setup is in `examples/basic`. Agents that cannot import this
+module can use the same Remember and Recall contract through the
+[MCP server](mcp.md).
 
 ## Ownership
 

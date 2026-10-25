@@ -96,7 +96,13 @@ github.com/yurika0211/aestus/memory/tidal
 
 `memory.Message` is a small LLM agnostic `{Role, Content}` type returned by short term context helpers; convert it to the message type used by your provider.
 
-See [`docs/`](docs/) for the memory model, vault format, hygiene guidance, recall patterns, and tidal design notes. A minimal runnable example is in [`examples/basic`](examples/basic). [`examples/demo`](examples/demo) serves the graph and recall surface:
+See [`docs/`](docs/) for the memory model, vault format, hygiene guidance, recall patterns, and tidal design notes. Other agents can use one vault as an MCP memory store through [`aestus-mcp`](docs/mcp.md):
+
+```bash
+go run ./cmd/aestus-mcp --vault ./.aestus/memory
+```
+
+A minimal runnable example is in [`examples/basic`](examples/basic). [`examples/demo`](examples/demo) serves the graph and recall surface:
 
 ```bash
 go run ./examples/demo
