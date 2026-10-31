@@ -370,10 +370,10 @@ func parseMemoryNote(path, root string) (*Entry, bool, error) {
 	// a block that is not in that first section. Only the note's own trailing
 	// block id is removed; other ^id markers are locators.
 	content := extractMarkdownSection(body, "Memory")
-	if content == "" {
+	if content == "" && !hasMarkdownSection(body, "Memory") {
 		content = strings.TrimSpace(bodyWithoutTitle(body))
 	}
-	if rest := bodyAfterFirstMemory(body); rest != "" {
+	if rest := bodyAfterFirstMemory(body, fm.BlockID); rest != "" {
 		content = strings.TrimSpace(content + "\n\n" + rest)
 	}
 	content = strings.TrimSpace(stripOwnBlockID(content, fm.BlockID))
@@ -423,6 +423,16 @@ func extractMarkdownSection(body, heading string) string {
 	return notemd.Section(body, heading)
 }
 
+func hasMarkdownSection(body, heading string) bool {
+	target := "## " + strings.TrimSpace(heading)
+	for _, line := range strings.Split(body, "\n") {
+		if strings.TrimSpace(line) == target {
+			return true
+		}
+	}
+	return false
+}
+
 func parseTier(raw string) Tier {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "short", "0":
@@ -436,7 +446,7 @@ func parseTier(raw string) Tier {
 	}
 }
 
-func bodyAfterFirstMemory(body string) string {
+func bodyAfterFirstMemory(body, ownBlockID string) string {
 	lines := strings.Split(body, "\n")
 	start := -1
 	for i, line := range lines {
@@ -448,12 +458,29 @@ func bodyAfterFirstMemory(body string) string {
 	if start < 0 {
 		return ""
 	}
-	for i := start; i < len(lines); i++ {
-		if strings.HasPrefix(strings.TrimSpace(lines[i]), "## ") {
-			return strings.TrimSpace(strings.Join(lines[i:], "\n"))
+
+	var sections []string
+	for i := start; i < len(lines); {
+		if !strings.HasPrefix(strings.TrimSpace(lines[i]), "## ") {
+			i++
+			continue
 		}
+		end := i + 1
+		for end < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[end]), "## ") {
+			end++
+		}
+		heading := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "## "))
+		sectionBody := strings.TrimSpace(strings.Join(lines[i+1:end], "\n"))
+		// Links are rendered from frontmatter on every save. Keeping the
+		// generated section in Entry.Content would make the next render feed it
+		// back into the note and grow the file on every reload.
+		sectionBodyWithoutOwnBlock := strings.TrimSpace(stripOwnBlockID(sectionBody, ownBlockID))
+		if !strings.EqualFold(heading, "Links") && !(strings.EqualFold(heading, "Memory") && sectionBodyWithoutOwnBlock == "") {
+			sections = append(sections, strings.TrimSpace(strings.Join(lines[i:end], "\n")))
+		}
+		i = end
 	}
-	return ""
+	return strings.TrimSpace(strings.Join(sections, "\n\n"))
 }
 
 func stripOwnBlockID(content, blockID string) string {
