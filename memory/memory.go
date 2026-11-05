@@ -166,6 +166,9 @@ func (s *Store) saveWithOptionsResultLocked(content, category string, tier Tier,
 	if content == "" {
 		return SaveResult{}, nil
 	}
+	if repeatedMemoryBlock(content) {
+		return SaveResult{}, ErrRepeatedMemoryBlock
+	}
 	policies, err := policy.Normalize(opts.RoutePolicies)
 	if err != nil {
 		return SaveResult{}, err
