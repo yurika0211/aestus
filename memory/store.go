@@ -28,6 +28,14 @@ func (s *Store) load() error {
 		if strings.ToLower(filepath.Ext(path)) != ".md" {
 			return nil
 		}
+		if info.Size() > s.maxSingleFileBytes() {
+			rel, relErr := filepath.Rel(s.dir, path)
+			if relErr != nil {
+				rel = path
+			}
+			s.SkippedNotes = append(s.SkippedNotes, filepath.ToSlash(rel))
+			return nil
+		}
 
 		entry, ok, err := parseMemoryNote(path, s.dir)
 		if err != nil {
@@ -86,12 +94,23 @@ func (s *Store) persist() error {
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			return fmt.Errorf("create note dir: %w", err)
 		}
-		if err := os.WriteFile(path, []byte(renderMemoryNote(e)), 0600); err != nil {
+		body := []byte(renderMemoryNote(e))
+		if int64(len(body)) > s.maxSingleFileBytes() {
+			return fmt.Errorf("%w: %s is %d bytes, cap %d", ErrNoteTooLarge, path, len(body), s.maxSingleFileBytes())
+		}
+		if err := os.WriteFile(path, body, 0600); err != nil {
 			return fmt.Errorf("write memory note %s: %w", path, err)
 		}
 	}
 	s.rebuildGraphLocked()
 	return nil
+}
+
+func (s *Store) maxSingleFileBytes() int64 {
+	if s == nil || s.MaxSingleFileBytes <= 0 {
+		return DefaultMaxSingleFileBytes
+	}
+	return s.MaxSingleFileBytes
 }
 
 func sortedMemoryEntryIDs(entries map[string]*Entry) []string {
