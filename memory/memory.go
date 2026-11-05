@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -38,6 +39,13 @@ const (
 	TierLong   = note.TierLong
 )
 
+// DefaultMaxSingleFileBytes is the rendered-note cap. A larger note is
+// refused on write and skipped on load so a junk concept cannot enter RSS.
+const DefaultMaxSingleFileBytes int64 = 4 << 20
+
+// ErrNoteTooLarge is returned when a rendered note would exceed the store cap.
+var ErrNoteTooLarge = errors.New("memory note exceeds MaxSingleFileBytes")
+
 // Store 管理三层持久记忆
 type Store struct {
 	mu                 sync.RWMutex
@@ -47,6 +55,10 @@ type Store struct {
 	activationReranker ActivationReranker
 	dir                string
 	nextID             int64
+	// MaxSingleFileBytes limits one rendered note. Zero uses DefaultMaxSingleFileBytes.
+	MaxSingleFileBytes int64
+	// SkippedNotes are vault files left unloaded because they exceed the cap.
+	SkippedNotes []string
 	// maintenance owns turn cadence for this process-wide memory store. It is
 	// initialized lazily so the Store zero value remains useful in tests.
 	maintenanceOnce sync.Once
