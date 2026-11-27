@@ -29,21 +29,7 @@ func extractQueryTerms(query string) []string {
 		if len(han) == 0 {
 			return
 		}
-		if len(han) == 1 {
-			han = han[:0]
-			return
-		}
-		if len(han) <= 4 {
-			terms = append(terms, string(han))
-		}
-		for n := 2; n <= 4; n++ {
-			if len(han) < n {
-				continue
-			}
-			for i := 0; i+n <= len(han); i++ {
-				terms = append(terms, string(han[i:i+n]))
-			}
-		}
+		terms = append(terms, hanQueryTerms(han)...)
 		han = han[:0]
 	}
 
@@ -63,6 +49,75 @@ func extractQueryTerms(query string) []string {
 	flushLatin()
 	flushHan()
 	return expandQueryTerms(query, dedupSlice(terms))
+}
+
+// hanStopRunes are Han characters that almost never carry retrieval meaning in
+// a query. They are overwhelmingly grammatical: sentence-final particles,
+// question words, pronouns, demonstratives and coordinating conjunctions.
+//
+// Splitting a Han run on them is what turns a sentence-shaped query into the
+// handful of terms a reader would actually search for. Before this, every query
+// was expanded into every 2-, 3- and 4-gram it contained, so "女儿花粉过敏出门"
+// produced 18 terms of which 11 were artifacts like "儿花" and "粉过". Those
+// artifacts are not merely inert: matchActivation awards a flat +0.22 per term
+// hit plus a +0.25 bonus once two terms hit, so a dozen junk terms made any
+// unrelated entry that shared two characters look relevant.
+//
+// Deliberately excluded, because they are load-bearing inside common content
+// words and splitting on them would destroy real terms:
+//
+//	过  花粉过敏 (allergy)
+//	地  地图 地方
+//	得  得到
+//	在  现在 存在
+//	以  可以 所以
+//	请  申请 邀请
+//	给  供给
+//	到  迟到 遇到
+//	会  会议 机会
+//	能  能力
+//	好  好像
+var hanStopRunes = map[rune]struct{}{
+	// Sentence-final and modal particles.
+	'吗': {}, '呢': {}, '吧': {}, '啊': {}, '呀': {}, '哦': {}, '嗯': {}, '嘛': {}, '呗': {}, '了': {}, '的': {},
+	// Question words: 什么 / 怎么 / 怎么样 / 为什么 / 哪个 / 谁.
+	'么': {}, '什': {}, '怎': {}, '谁': {}, '哪': {},
+	// Pronouns and demonstratives.
+	'我': {}, '你': {}, '他': {}, '她': {}, '它': {}, '们': {}, '这': {}, '那': {},
+	// Coordinating conjunctions and common copula/completive particles.
+	'和': {}, '或': {}, '与': {}, '及': {}, '而': {}, '就': {}, '也': {}, '都': {}, '是': {},
+}
+
+// hanQueryTerms turns one run of Han characters into the terms worth scoring.
+//
+// The unit is chosen to keep recall while dropping the combinatorial junk:
+//   - runs of 2 to 4 characters contribute the whole run plus its bigrams, so
+//     both the exact word (花粉过敏) and its parts (花粉, 过敏) match;
+//   - longer runs contribute only their bigrams, because a whole sentence is
+//     never a term and its 3- and 4-grams are mostly crossing a word boundary.
+func hanQueryTerms(run []rune) []string {
+	var terms []string
+	start := 0
+	emit := func(segment []rune) {
+		switch {
+		case len(segment) < 2:
+			return
+		case len(segment) <= 4:
+			terms = append(terms, string(segment))
+		}
+		for i := 0; i+2 <= len(segment); i++ {
+			terms = append(terms, string(segment[i:i+2]))
+		}
+	}
+	for i, r := range run {
+		if _, stop := hanStopRunes[r]; !stop {
+			continue
+		}
+		emit(run[start:i])
+		start = i + 1
+	}
+	emit(run[start:])
+	return terms
 }
 
 type queryAliasRule struct {
